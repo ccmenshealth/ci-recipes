@@ -54,15 +54,17 @@ jobs:
             echo "::error::job.workflow_sha is empty; cannot tell which ci-recipes commit was called. Refusing to pass."
             exit 1
           fi
+          # Name the commit, not the tag object an annotated tag would give in job.workflow_sha.
+          RECIPES_COMMIT="$(git -C .ci-recipes rev-parse --short=8 HEAD)"
           if [ ! -f scripts/identifier-guard.py ]; then
             echo "::error::scripts/identifier-guard.py is missing. Fix: from a ci-recipes clone run ./sync.sh --only $GITHUB_REPOSITORY (or copy identifier-guard/identifier-guard.py to scripts/identifier-guard.py) and commit."
             exit 1
           fi
           if ! cmp -s scripts/identifier-guard.py .ci-recipes/identifier-guard/identifier-guard.py; then
-            echo "::error::scripts/identifier-guard.py differs from ccmenshealth/ci-recipes identifier-guard/identifier-guard.py@${GITHUB_JOB_WORKFLOW_SHA:0:8}. Fix: from a ci-recipes clone run ./sync.sh --only $GITHUB_REPOSITORY (or copy the canonical file over scripts/identifier-guard.py) and commit; never edit the copy in one repo."
+            echo "::error::scripts/identifier-guard.py differs from ccmenshealth/ci-recipes identifier-guard/identifier-guard.py@${RECIPES_COMMIT}. Fix: from a ci-recipes clone run ./sync.sh --only $GITHUB_REPOSITORY (or copy the canonical file over scripts/identifier-guard.py) and commit; never edit the copy in one repo."
             exit 1
           fi
-          echo "scripts/identifier-guard.py matches ci-recipes@${GITHUB_JOB_WORKFLOW_SHA:0:8} (blob $(git hash-object scripts/identifier-guard.py | cut -c1-8))"
+          echo "scripts/identifier-guard.py matches ci-recipes@${RECIPES_COMMIT} (blob $(git hash-object scripts/identifier-guard.py | cut -c1-8))"
         env:
           GITHUB_JOB_WORKFLOW_SHA: ${{ job.workflow_sha }}
       - name: Scan added lines with this repo's copy

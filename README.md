@@ -31,21 +31,22 @@ copy (with the fix in the error), then runs the caller's own copy: three-dot dif
 1. Add a failing test row to `identifier-guard/tests/test_identifier_guard.py` (stdlib unittest; literals in the test
    file use only the allowed shapes, flagged values are assembled at run time), then fix the script.
 2. `python3 -m unittest discover -s identifier-guard/tests` and open a PR here; CI runs the tests and scans this repo.
-3. After the merge, move the `v1` tag to the new commit (`git tag -f v1 && git push -f origin v1`) and run `./sync.sh`
+3. After the merge, move the `v1` tag to the new commit (`git tag -f v1 && git push -f origin v1`, lightweight) and run `./sync.sh`
    from this clone: it clones each repo, copies the script, hook and caller workflow, and opens one PR per repo with the
    repo's full-scan delta (file:line + pattern) in the body. `./sync.sh --only repo1,repo2` for a subset, `--dry-run`
    to look first. Until a repo merges its PR, its next guard run fails the hash check with the same fix instruction.
 
 ## repo-standard
 
-[`STANDARD.md`](STANDARD.md) is the standard every repo follows (doc set, images, test data, guard, PR template,
-public-repo rule). `repo-standard/check.py` enforces the checkable part; a caller opts in with `with: standard: true`
+[`STANDARD.md`](STANDARD.md) is the standard every repo follows (doc set, images and binary documents, secrets, test data, guard,
+PR template, public-repo rule). `repo-standard/check.py` enforces the checkable part; a caller opts in with `with: standard: true`
 and the reusable workflow runs it after the scan in the same job. `template/` is what a new repo starts from
 (`./new-repo.sh <name> --private|--public [--dry-run]`); `./sync.sh --standard --only <repo>` adopts the standard in an
 existing repo, one PR each. Tests: `python3 -m unittest discover -s repo-standard/tests`.
 
 Tags: `v1` moves with every change that keeps existing callers' results the same (a new opt-in input does); a change
-that would alter what an existing caller runs gets a new major tag. Release tags (`v1.1`, …) mark each release.
+that would alter what an existing caller runs gets a new major tag. Release tags (`v1.1`, …) mark each release. All tags
+are lightweight (`git tag -f v1 <commit>`, no `-a`), so `job.workflow_sha` in the reusable workflow is the commit.
 
 ### Files
 
@@ -62,6 +63,7 @@ that would alter what an existing caller runs gets a new major tag. Release tags
 | `repo-standard/check.py`, `repo-standard/tests/` | the standard check and its tests |
 | `template/` | the files a new repo starts from |
 | `new-repo.sh` | create a repo from the template |
+| `sweep.sh` | read-only audit of every repo against the standard (run from the owner's Mac) |
 | `lib/apply.sh` | file placement shared by `sync.sh` and `new-repo.sh` |
 
 ### Cost

@@ -105,7 +105,7 @@ for repo in "${REPOS[@]}"; do
       echo
       echo "## Repo-standard check on this branch (exit $std_rc)"
       echo
-      if [ "$std_rc" = 0 ]; then echo "Clean."; else echo "Fix these here (rename, move, delete, or an \`allow\` / \`image_paths\` entry) before merging:"; echo; sed 's/^/    /' "$std_out"; fi
+      if [ "$std_rc" = 0 ]; then echo "Clean."; else echo "Fix these here (rename, move, delete, or an \`allow\` / \`asset_paths\` entry) before merging:"; echo; sed 's/^/    /' "$std_out"; fi
       echo
       echo "## Identifier guard"
       echo

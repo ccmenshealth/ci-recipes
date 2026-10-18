@@ -23,20 +23,30 @@ A repo holds only documentation that helps someone maintain the code. The fixed 
   (`~/.claude/projects/<repo>/memory/`), which loads per repo and never leaves the Mac. *Why: narrative goes stale,
   duplicates git, and is the kind of text most likely to carry
   an identifier.*
+- **Diagrams are text**: Mermaid or ASCII inside the markdown, never an image (no image lives under `docs/`).
+  *Why: text diffs, reviews and scans like the rest of the doc.*
 - **Records state the rule, never the event**: commit messages, PRs, docs and notes say what a thing now is, not what
   it was or what went wrong. *Why: a record of an event can imply what data was where; a rule cannot.*
 
-## Images
+## Images and binary documents
 
-Only images that code references: logos, app and web icons, generated synthetic goldens, tiny synthetic fixtures.
-Never a screenshot of a live screen; mockups are HTML files, not captures. *Why: an image cannot be scanned for
-identifiers by the guard, so the only safe image is one nobody had to look at a live screen to make.*
+Only images and binary documents (PDF, Word, Excel, PowerPoint, OpenDocument) that code references or serves: logos,
+app and web icons, blank forms the product serves, generated synthetic goldens, tiny synthetic fixtures. Never a
+screenshot of a live screen or an export of live data; mockups are HTML files, not captures. *Why: the guard cannot
+read an image or a binary document, so the only safe one is one nobody had to take from a live system to make.*
 
 Default allowed paths (case-insensitive): `public/**`, `**/public/**`, `assets/**`, `**/assets/**`,
-`fixtures/golden/**`, `**/*.ico`, `**/*.icns`, `**/*.appiconset/**`, `**/*.iconset/**`, `**/*.xcassets/**`,
-`**/icons/**`, `**/icon/**`, `**/app/icon.*`, `**/app/apple-icon.*`. Any other asset directory (a fixture folder, a
-logo folder) is named in `image_paths` in `.repo-standard.json` after someone has looked at what is in it. No image
-under `docs/` is ever allowed, whatever the directory: docs are prose.
+`fixtures/golden/**`, `fixtures/synthetic/**`, `**/*.ico`, `**/*.icns`, `**/*.appiconset/**`, `**/*.iconset/**`,
+`**/*.xcassets/**`, `**/icons/**`, `**/icon/**`, `**/app/icon.*`, `**/app/apple-icon.*`. Any other asset directory (a
+fixture folder, a logo folder, a folder of blank forms) is named in `asset_paths` in `.repo-standard.json` after
+someone has looked at what is in it. Nothing of either kind under `docs/` is ever allowed, whatever the directory:
+docs are prose.
+
+## Secrets
+
+Secrets, keys and trigger/callback URLs with signatures are never tracked; a served path never holds anything but site
+files. A value that has been tracked is rotated, not just deleted. Documentation uses a placeholder (`REDACTED`,
+`<key>`, `${VAR}`). *Why: anything tracked is copied to every clone and, on a served path, to every visitor.*
 
 ## Test data
 
@@ -58,7 +68,8 @@ Every repo carries `scripts/identifier-guard.py` (byte-identical to `identifier-
 `.githooks/pre-commit` (byte-identical to `identifier-guard/pre-commit`; `git config core.hooksPath .githooks` once per
 clone) and `.github/workflows/identifier-guard.yml`, the thin caller of the reusable workflow. *Why: the hook stops an
 identifier before it is committed, offline; CI stops it before it is merged; one canonical copy keeps them identical.*
-Change the guard here and run `./sync.sh`; never edit a repo's copy.
+Change the guard here and run `./sync.sh`; never edit a repo's copy. Tags (`v1`, `v1.N`) are lightweight, so the
+reusable workflow's `job.workflow_sha` is the commit itself.
 
 ## Pull requests
 
@@ -70,7 +81,8 @@ line in every PR puts the cost where the change is made.*
 ## Public repos
 
 A public repo never touches a system that may hold patient data: no secret (other than `GITHUB_TOKEN`), no
-self-hosted runner, no dependency on a private repo. Set `"public": true` in `.repo-standard.json`. *Why: anyone can
+self-hosted runner, no runner but `ubuntu-*` (no new GitHub-hosted macOS or Windows jobs), no dependency on a private
+repo. Set `"public": true` in `.repo-standard.json`. *Why: anyone can
 open a pull request against a public repo, and its workflows run with whatever the repo can reach.*
 
 ## `.repo-standard.json`
@@ -79,16 +91,18 @@ open a pull request against a public repo, and its workflows run with whatever t
 {
   "version": 1,
   "public": false,
-  "image_paths": ["public/**", "assets/**"],
+  "asset_paths": ["public/**", "assets/**", "forms/blank/**"],
   "allow": ["docs/plans/widget-ledger.md"]
 }
 ```
 
 - `public`: applies the public-repo rule.
-- `image_paths`: replaces the default image allowlist when present (the template lists the default). An entry that
-  would allow an image at the top level or under `docs/` is refused.
+- `asset_paths`: replaces the default asset allowlist when present (the template lists the default). An entry that
+  would allow an image or binary document at the top level or under `docs/` is refused. (`image_paths`, its old name,
+  is an error that says so.)
 - `allow`: exact tracked paths exempt from the narrative-name and narrative-directory rules, for a file whose name
-  only looks narrative (a feature called "ledger"). An entry for a file that no longer exists is an error.
+  only looks narrative (a feature called "ledger"). An entry for a file that no longer exists is an error. `allow`
+  never exempts a secret.
 
 Unknown keys and wrong types are errors, so a typo never switches a rule off silently.
 
@@ -100,20 +114,21 @@ per violation: rule, path, fix. Paths only, never file content. Exit 0 clean, 1 
 | Rule | Fails when |
 |---|---|
 | `narrative-name` | a document file (`.md`, `.txt`, `.rst`, `.html`, `.pdf`, `.docx`, …, or no extension) is named like narrative: contains hand-off/handoff, ledger, current-state, resume-prompt or startup-prompt; a history of the work (`session-history`, `change-history`, `HISTORY.md`); or the whole name is progress, status, todo(s), bookmark(s) |
-| `narrative-dir` | any file under `docs/` sits in a directory named progress, todo(s), audit(s), archive(d), history/histories, handoff(s), ledger(s), sessions or status |
-| `image-path` | an image (`png jpg jpeg gif webp bmp tif tiff heic heif avif svg ico icns`) is under `docs/` or outside the allowed paths |
+| `narrative-dir` | any file under `docs/` sits in a directory named progress, todo(s), audit(s), archive(d), history/histories, handoff(s), ledger(s), sessions or status; or a top-level directory is named archive(d), history/histories or handoff(s) |
+| `binary-path` | an image (`png jpg jpeg gif webp bmp tif tiff heic heif avif svg ico icns`) or binary document (`pdf doc docx xls xlsx ppt pptx odt ods odp`) is under `docs/` or outside the allowed paths |
+| `secret-shape` | a tracked text file (no NUL byte, at most 2 MB) has a signed URL (`sig=`), SAS token, storage `AccountKey=`, `SharedAccessSignature`, private-key block, GitHub, AWS or Slack token, or a long bearer token; reported as path:line and the shape's name, never the text. Placeholders pass; Azure client secrets have no shape and are not detected |
 | `required-file` | `README.md` or `CLAUDE.md` is missing |
 | `pr-template` | `.github/PULL_REQUEST_TEMPLATE.md` is missing or has no `CI cost` line |
 | `guard` | `scripts/identifier-guard.py` is missing or differs from the canonical copy |
 | `hook` | `.githooks/pre-commit` is missing or differs from the canonical hook |
-| `public-repo` | (public repos) a workflow or local action names a secret other than `GITHUB_TOKEN` (including `secrets: inherit`), runs on anything but a literal GitHub-hosted label, or uses or checks out a `ccmenshealth/` repo other than ci-recipes |
+| `public-repo` | (public repos) a workflow or local action names a secret other than `GITHUB_TOKEN` (including `secrets: inherit`), runs on anything but a literal `ubuntu-*` label, or uses or checks out a `ccmenshealth/` repo other than ci-recipes |
 
 Names only count for document files: a source file called `history.ts` or `handoff.py` is code, not narrative.
 "History" alone is a feature or clinical word (payment history, medical history) and passes. A document about a
 feature that happens to be called a ledger or a hand-off goes in `allow`.
 
-Not machine-checked (review rules): which documents sit under `docs/` beyond the narrative names; what an image in an
-allowed path shows; wording of records (rule, not event); a repo that has no caller workflow at all (see New repos).
+Not machine-checked (review rules): which documents sit under `docs/` beyond the narrative names; what an image or
+binary document in an allowed path shows; secrets without a recognisable shape; wording of records (rule, not event); a repo that has no caller workflow at all (see New repos).
 
 ## In CI
 
@@ -139,8 +154,10 @@ GitHub repo, and sets delete-branch-on-merge, no wiki, Actions with a read-only 
 GitHub-owned actions and this repo's reusable workflow). It prints what the owner still does: secrets, CodeRabbit,
 the hook, memory. `--dry-run` builds and checks the tree and prints the GitHub calls without making them.
 
-A repo that skipped the template has no caller, so nothing in it runs the check. The owner's periodic sweep runs
-`check.py` over a fresh clone of every repo.
+A repo that skipped the template has no caller, so nothing in it runs the check. `./sweep.sh` (read-only) lists every
+non-archived repo of the owner, reports whether it has the caller with `standard: true`, and with `--check` runs
+`check.py` on a fresh clone of each. This repo is public and its CI token cannot read private repos, so the sweep runs
+from the owner's Mac, from the Monday scheduled task (`gh` logged in as the owner).
 
 ## Existing repos
 
