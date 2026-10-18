@@ -14,7 +14,8 @@ impossible NANP number (area code or exchange starting 0/1), the 4711/471 synthe
 999-prefixed sentinel record numbers, example.com, or the words synthetic/fixture/placeholder/sentinel) or sits in a
 fixture path (test/fixture/mock directories, *.test.* / *.spec.* files, files named *fixtures.*, Sources/AgentChecks).
 Labelled DOBs: 1900-01-01 and 1970-01-01 are documented placeholders; years before 1900 or after this year are
-impossible; years 2020 to this year count only in value position (`DOB: 20xx-mm-dd`, `"dob": "..."`), not after prose.
+impossible; years 2020 to this year count only in value position (`DOB: 20xx-mm-dd`, `"dob": "..."`), not after prose
+(so `dob: new Date("20xx-mm-dd")` is not flagged either: letters sit between label and date).
 Output names file, line and pattern only; it never prints the matched text.
 
 usage: identifier-guard.py --base <rev> --head <rev>      (scans `git diff base..head`; --three-dot for base...head)
@@ -28,11 +29,11 @@ from datetime import date
 
 MONTH = r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?"
 DATE = (r"(?:\d{1,4}[/\-.]\d{1,2}[/\-.]\d{1,4}"                       # 03/14/1987, 1987-03-14, 14.03.1987
-        r"|(?i:" + MONTH + r")\s+\d{1,2},?\s+\d{4}"                     # March 14, 1987
-        r"|\d{1,2}\s+(?i:" + MONTH + r"),?\s+\d{4})")                   # 14 Mar 1987
+        r"|(?i:" + MONTH + r")[\s-]+\d{1,2},?[\s-]+\d{4}"               # March 14, 1987; Mar-14-1987
+        r"|\d{1,2}[\s-]+(?i:" + MONTH + r"),?[\s-]+\d{4})")             # 14 Mar 1987; 14-Mar-1987 (Cerner)
 DOB_LABEL = r"(?:(?i:(?<![a-z])(?:dob|date[\s_]*of[\s_]*birth|birth[\s_]*date|dateofbirth|birthdate))|(?<=[a-z])(?:DOB|Dob))(?![a-z])"
 PHONE_LABEL = r"(?:(?i:(?<![a-z])(?:phone|tel|cell|mobile|fax|sms|number|contact|caller|e164))|(?<=[a-z])(?:Phone|Tel|Cell|Mobile|Fax|Sms|Number|Contact|Caller))"
-SSN_LABEL = r"(?i:\b(?:ssn|social[\s_]*security(?:[\s_]*(?:number|no\.?|#))?)\b)"
+SSN_LABEL = r"(?:(?i:(?<![a-z])(?:ssn|social[\s_]*security(?:[\s_]*(?:number|no\.?|#))?))|(?<=[a-z])Ssn)(?![a-z])"
 SSN_DIGITS = r"(?!000|666|9\d\d)(\d{3})%s(?!00)(\d{2})%s(?!0000)(\d{4})"
 PATTERNS = {   # name -> list of regexes; each match is judged on its own text
     "ssn": [re.compile(r"\b" + SSN_DIGITS % ("-", "-") + r"\b"),
@@ -42,13 +43,13 @@ PATTERNS = {   # name -> list of regexes; each match is judged on its own text
     "ccm": [re.compile(r"(?i)\bCCM[-\s]?\d{5}\b")],
     "phone": [re.compile(r"(?<![\d.])(?:\(\d{3}\)\s?\d{3}[-. ]\d{4}|\b\d{3}([-.])\d{3}\1\d{4}|\b[2-9]\d{2} [2-9]\d{2} \d{4}"
                          r"|\+1[\s-]?\d{3}[\s-]?\d{3}[\s-]?\d{4}|\+1\d{10})\b(?![\d.])"),
-              re.compile(PHONE_LABEL + r"[^\n]{0,40}?(?<![\d.])([2-9]\d{2}[2-9]\d{6})(?![\d.])")],   # ten contiguous digits, label within 40 chars
+              re.compile(PHONE_LABEL + r"[^\n]{0,40}?(?<![\d.])(?P<num>[2-9]\d{2}[2-9]\d{6})(?![\d.])")],   # ten contiguous digits, label within 40 chars
     "name_near_id": [re.compile(r"\b[A-Z][A-Z'\-]{2,30}(?:\s[A-Z][A-Z'\-]{1,30})?,\s?[A-Z][A-Z'\-]{1,30}\b[^\n]{0,80}?(?:\b\d{5,14}\b|\b\d{1,2}/\d{1,2}/\d{2,4}\b)")],
     "email": [re.compile(r"(?i)(?<![a-z0-9._%+\-])[a-z0-9._%+\-]{1,64}@(?:gmail|googlemail|yahoo|ymail|rocketmail|hotmail|outlook|icloud|mac|me|aol|live|msn|comcast|att|sbcglobal|verizon|cox|charter|earthlink|frontier|proton|protonmail|pm|gmx)\.(?:com|net|me|co\.uk)\b")],
 }
 LINE_MARKER = re.compile(r"(?i)\b(?:synthetic|fixture|placeholder|sentinel)\b")   # explicit, documented opt-out words only
 SYNTH_VALUE = re.compile(r"\b(?:ROE|DOE|POE|BLOGGS|MOCKLEY|STUBBS|FAKEMAN)\b|555[-. ]?01\d\d|55501\d\d|\b4711\d*\b|\b0*999\d{5,7}\b|(?i:CCM[-\s]?)?\b471\d{2}\b|(?i:CCM[-\s]?)(?:0000\d|12345|99999)\b")
-PLACEHOLDER_DOB = re.compile(r"(?i)^(?:(?:1900|1970)[-/.]0?1[-/.]0?1|0?1[-/.]0?1[-/.](?:1900|1970)|jan[a-z]*\.?\s+0?1,?\s+(?:1900|1970)|0?1\s+jan[a-z]*\.?,?\s+(?:1900|1970))$")
+PLACEHOLDER_DOB = re.compile(r"(?i)^(?:(?:1900|1970)[-/.]0?1[-/.]0?1|0?1[-/.]0?1[-/.](?:1900|1970)|jan[a-z]*\.?[\s-]+0?1,?[\s-]+(?:1900|1970)|0?1[\s-]+jan[a-z]*\.?,?[\s-]+(?:1900|1970))$")
 FIXTURE_PATH = re.compile(r"(?i)(^|/)(tests?|__tests__|fixtures?|__fixtures__|__mocks__|mocks?|e2e|replay|worlds?|AgentChecks)(/|$)|\.(test|spec)\.[a-z]+$|(^|/)[^/]*fixtures?\.[^/]+$")
 RECENT_BIRTH_YEAR = 2020     # 2020..this year: a child's DOB; flagged only in value position (no words between label and date)
 MAX_LINE = 2000              # --files mode: longer lines are minified bundles, not prose
@@ -63,7 +64,7 @@ def impossible_nanp(digits):
 
 
 def synthetic(name, m):
-    text = m.group(0)
+    text = m.groupdict().get("num") or m.group(0)      # a labelled number is judged on the number, not on the label or the gap
     if SYNTH_VALUE.search(text):
         return True
     if name == "phone":

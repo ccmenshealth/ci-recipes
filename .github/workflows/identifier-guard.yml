@@ -22,21 +22,25 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Check out the calling repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
           persist-credentials: false
       - name: Check out ci-recipes at the called ref
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           repository: ccmenshealth/ci-recipes
-          # job.workflow_sha = the commit of the workflow file that defines this job, i.e. this reusable workflow (the
-          # caller pins it with @v1); github.job_workflow_sha is the older name for the same value.
-          ref: ${{ job.workflow_sha || github.job_workflow_sha }}
+          # job.workflow_sha = the commit of the workflow file that defines this job, i.e. this reusable workflow at the
+          # ref the caller pinned (@v1). The next step fails if it is empty rather than silently comparing against main.
+          ref: ${{ job.workflow_sha }}
           path: .ci-recipes
           persist-credentials: false
       - name: Fail if this repo's copy differs from the canonical script
         run: |
+          if [ -z "$GITHUB_JOB_WORKFLOW_SHA" ]; then
+            echo "::error::job.workflow_sha is empty; cannot tell which ci-recipes commit was called. Refusing to pass."
+            exit 1
+          fi
           if [ ! -f scripts/identifier-guard.py ]; then
             echo "::error::scripts/identifier-guard.py is missing. Fix: from a ci-recipes clone run ./sync.sh --only $GITHUB_REPOSITORY (or copy identifier-guard/identifier-guard.py to scripts/identifier-guard.py) and commit."
             exit 1
@@ -47,7 +51,7 @@ jobs:
           fi
           echo "scripts/identifier-guard.py matches ci-recipes@${GITHUB_JOB_WORKFLOW_SHA:0:8} (blob $(git hash-object scripts/identifier-guard.py | cut -c1-8))"
         env:
-          GITHUB_JOB_WORKFLOW_SHA: ${{ job.workflow_sha || github.job_workflow_sha }}
+          GITHUB_JOB_WORKFLOW_SHA: ${{ job.workflow_sha }}
       - name: Scan added lines with this repo's copy
         env:
           EVENT: ${{ github.event_name }}

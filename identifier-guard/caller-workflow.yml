@@ -3,6 +3,7 @@ name: identifier-guard
 # Thin caller: the job lives in ccmenshealth/ci-recipes (.github/workflows/identifier-guard.yml), which first checks that
 # scripts/identifier-guard.py here is byte-identical to the canonical copy, then runs this repo's copy. Do not edit the
 # script in this repo; change it in ci-recipes and run sync.sh. Managed by ci-recipes/sync.sh.
+# The check appears as "identifier-guard / guard / guard" (a called job), where the in-repo job was "identifier-guard / guard".
 # Runs on ready pull requests (three-dot diff against the base) and once a week over the default branch's last 8 days.
 # Cost: one short GitHub-hosted Linux job per run, billed as 1 minute ($0.006); unchanged from the previous in-repo job.
 on:

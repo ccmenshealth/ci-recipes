@@ -108,9 +108,18 @@ class F2_SpacedAndContiguousPhones(unittest.TestCase):
         self.assertEqual(patterns(SRC, "const id = " + TEN), [])                 # no label: an id, not a phone
         self.assertEqual(patterns(SRC, "phone " + ("x" * 41) + " " + TEN), [])   # label too far away
 
-    def test_spaced_number_with_area_or_exchange_outside_2_9_is_not_a_phone(self):
-        self.assertEqual(patterns(SRC, "ref " + d("1", 3) + " " + d("3", 3) + " " + d("4", 4)), [])
-        self.assertEqual(patterns(SRC, "ref " + d("2", 3) + " " + d("0", 3) + " " + d("4", 4)), [])
+    def test_spaced_number_with_area_or_exchange_outside_2_9_is_not_a_phone_shape(self):
+        shape = guard.PATTERNS["phone"][0]          # the shape itself, before G5 judges the digits
+        self.assertIsNotNone(shape.search("ref " + SPACED))
+        self.assertIsNone(shape.search("ref " + d("1", 3) + " " + d("3", 3) + " " + d("4", 4)))
+        self.assertIsNone(shape.search("ref " + d("2", 3) + " " + d("0", 3) + " " + d("4", 4)))
+
+    def test_label_followed_by_more_than_ten_digits_is_not_a_phone(self):
+        self.assertEqual(patterns(SRC, "phone: " + d("2", 11)), [])
+        self.assertEqual(patterns(SRC, "phone: " + d("2", 3) + d("3", 3) + d("4", 4) + "." + d("5", 2)), [])
+
+    def test_synthetic_token_in_the_gap_does_not_exempt_the_number(self):
+        self.assertEqual(patterns(SRC, "phone ref 47110001 then " + TEN), ["phone"])
 
 
 class F3_RecentDobYears(unittest.TestCase):
@@ -125,10 +134,10 @@ class F3_RecentDobYears(unittest.TestCase):
 
     def test_impossible_years_are_exempt(self):
         self.assertEqual(patterns(SRC, "DOB: %d-03-14" % (THIS_YEAR + 1)), [])
-        self.assertEqual(patterns(SRC, "DOB: 1899-12-31"), [])
+        self.assertEqual(patterns(SRC, "DOB: %d-12-31" % (1900 - 1)), [])
 
     def test_1900s_dates_other_than_the_placeholder_are_flagged(self):
-        self.assertEqual(patterns(SRC, "DOB: 1905-03-14"), ["dob"])
+        self.assertEqual(patterns(SRC, "DOB: %d-03-14" % (1900 + 5)), ["dob"])
 
 
 class F4_FilesModeFailsClosed(unittest.TestCase):
@@ -173,6 +182,8 @@ class G1_MonthNameDobs(unittest.TestCase):
     def test_month_name_forms_are_flagged(self):
         self.assertEqual(patterns(SRC, "DOB: March 14, %d" % ADULT), ["dob"])
         self.assertEqual(patterns(SRC, "DOB: 14 Mar %d" % ADULT), ["dob"])
+        self.assertEqual(patterns(SRC, "DOB: 14-Mar-%d" % ADULT), ["dob"])      # Cerner style
+        self.assertEqual(patterns(SRC, "DOB: Mar-14-%d" % ADULT), ["dob"])
         self.assertEqual(patterns(SRC, "Date of birth: Sept 3 %d" % ADULT), ["dob"])
 
     def test_month_name_placeholder_is_exempt(self):
@@ -187,6 +198,8 @@ class G2_LabelledSsnWithoutDashes(unittest.TestCase):
         self.assertEqual(patterns(SRC, "SSN: " + SSN_PLAIN), ["ssn"])
         self.assertEqual(patterns(SRC, "ssn " + SSN_SPACED), ["ssn"])
         self.assertEqual(patterns(SRC, "social security number " + SSN_PLAIN), ["ssn"])
+        self.assertEqual(patterns(SRC, "patient_ssn = " + SSN_PLAIN), ["ssn"])
+        self.assertEqual(patterns(SRC, "patientSsn: " + SSN_PLAIN), ["ssn"])
 
     def test_bare_nine_digits_without_a_label_are_not(self):
         self.assertEqual(patterns(SRC, "const id = " + SSN_PLAIN), [])
@@ -223,10 +236,11 @@ class G5_ImpossibleNanpNumbersAreSynthetic(unittest.TestCase):
         self.assertEqual(patterns(SRC, "phone: 5552345678"), [])
 
     def test_area_or_exchange_starting_0_or_1_is_synthetic(self):
-        self.assertEqual(patterns(SRC, "(805) 123-4567"), [])
-        self.assertEqual(patterns(SRC, "805-123-4567"), [])
-        self.assertEqual(patterns(SRC, "000-000-0000"), [])
-        self.assertEqual(patterns(SRC, "(123) 456-7890"), [])
+        exch1 = d("1", 3) + "-" + d("4", 4)                                   # exchange starting 1: unassignable
+        self.assertEqual(patterns(SRC, "(" + d("2", 3) + ") " + exch1), [])
+        self.assertEqual(patterns(SRC, d("2", 3) + "-" + exch1), [])
+        self.assertEqual(patterns(SRC, d("0", 3) + "-" + d("0", 3) + "-" + d("0", 4)), [])
+        self.assertEqual(patterns(SRC, "(" + d("1", 3) + ") " + d("4", 3) + "-" + d("7", 4)), [])   # area starting 1
 
     def test_a_possible_number_is_still_flagged(self):
         self.assertEqual(patterns(SRC, "(" + d("2", 3) + ") " + d("3", 3) + "-" + d("4", 4)), ["phone"])

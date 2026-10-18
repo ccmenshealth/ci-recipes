@@ -11,7 +11,9 @@
 #   --only     comma-separated repo names (the rollout waves); default: every repo in REPOS below
 #   --dry-run  clone, copy, scan and print the PR body; no commit, push or PR
 #   --force    push and open a PR even if one is already open for the branch (the branch is replaced)
-# Requires: git, gh (logged in as the ccmenshealth account), python3.
+# Requires: git, gh (logged in as the ccmenshealth account, with `gh auth setup-git` so private clones work), python3.
+# The push uses --force-with-lease with the lease taken at clone time: it replaces an existing remote ci/identifier-guard-v1
+# (for example a closed PR's branch) and only protects against a push that lands between the clone and the push.
 set -euo pipefail
 
 OWNER=ccmenshealth
@@ -32,23 +34,28 @@ while [ $# -gt 0 ]; do
     --only) ONLY="$2"; shift 2 ;;
     --dry-run) DRY=1; shift ;;
     --force) FORCE=1; shift ;;
-    --workdir) WORKDIR="$2"; shift 2 ;;
+    --workdir) [ -n "$2" ] || { echo "--workdir needs a path" >&2; exit 2; }; WORKDIR="$2"; shift 2 ;;
     -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 [ -f "$SRC_SCRIPT" ] && [ -f "$SRC_HOOK" ] && [ -f "$SRC_WF" ] || { echo "run from a ci-recipes clone" >&2; exit 2; }
 if [ -n "$ONLY" ]; then IFS=',' read -r -a REPOS <<< "${ONLY//$OWNER\//}"; fi
+[ -n "$WORKDIR" ] || { echo "empty work directory" >&2; exit 2; }
 mkdir -p "$WORKDIR"
+CO_AUTHOR="${CO_AUTHOR:-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>}"
 CANON_SHA="$(git -C "$HERE" hash-object "$SRC_SCRIPT")"
 RECIPES_REV="$(git -C "$HERE" rev-parse --short HEAD)"
 
-# full_scan <script> <clone>: every tracked file through the guard in --files mode; prints "path:line pattern" lines sorted.
+# full_scan <script> <clone>: every tracked regular file (no symlinks, no submodule gitlinks) through the guard in --files
+# mode; prints "path:line pattern" lines sorted.
 full_scan() {
-  ( cd "$2" && git ls-files -z | xargs -0 python3 "$1" --files 2>/dev/null || true ) | { grep '^  ' || true; } | sed 's/^  //' | sort
+  ( cd "$2" && git ls-files -z | while IFS= read -r -d '' f; do [ -f "$f" ] && [ ! -L "$f" ] && printf '%s\0' "$f"; done \
+      | xargs -0 python3 "$1" --files 2>/dev/null || true ) | { grep '^  ' || true; } | sed 's/^  //' | sort
 }
 
 for repo in "${REPOS[@]}"; do
+  [ -n "$repo" ] || continue
   echo "=== $repo"
   clone="$WORKDIR/$repo"
   rm -rf "$clone"
@@ -78,7 +85,7 @@ for repo in "${REPOS[@]}"; do
 
   body="$WORKDIR/$repo.body.md"
   {
-    echo "Thin caller for the shared identifier guard: \`scripts/identifier-guard.py\` and \`.githooks/pre-commit\` become byte-identical copies of \`ccmenshealth/ci-recipes\` @ ${RECIPES_REV} (script blob \`${CANON_SHA:0:8}\`); \`.github/workflows/identifier-guard.yml\` now calls the reusable workflow at \`@v1\`, which fails if this repo's copy ever differs from the canonical one and then runs this repo's own copy on added lines, exactly as before. Hook behaviour is unchanged (added lines only, offline)."
+    echo "Thin caller for the shared identifier guard: \`scripts/identifier-guard.py\` and \`.githooks/pre-commit\` become byte-identical copies of \`ccmenshealth/ci-recipes\` @ ${RECIPES_REV} (script blob \`${CANON_SHA:0:8}\`); \`.github/workflows/identifier-guard.yml\` now calls the reusable workflow at \`@v1\`, which fails if this repo's copy ever differs from the canonical one and then runs this repo's own copy on added lines, exactly as before. The hook file is unchanged and still scans added lines only, offline; the detection rules are the hardened ones (F1-F4, G1-G5)."
     echo
     echo "Plan: \`vcmc-notes/docs/plans/F_2026-10-17_identifier-guard-hardening.plan.md\` (F1-F4, G1-G5). Hits are reported as file:line + pattern only."
     echo
@@ -116,7 +123,7 @@ scripts/identifier-guard.py and .githooks/pre-commit are byte-identical copies o
 the workflow is a thin caller of the reusable workflow, which checks the copy against the canonical one before
 running it. Full-scan delta on ${default}: ${n_before} -> ${n_after} hits (${n_gone} gone, ${n_new} new).
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+${CO_AUTHOR}
 EOF
   git -C "$clone" push -q --force-with-lease -u origin "$BRANCH"
   if [ -n "$open_pr" ]; then
