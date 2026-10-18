@@ -10,9 +10,9 @@ Checked patterns (on added lines only): SSN (dashed anywhere; labelled with or w
 numbers (dashed, dotted, spaced, parenthesised, +1, and ten contiguous digits after a phone-ish label); LAST, FIRST
 (caps) next to a 5+ digit number; personal e-mail domains.
 A line is allowed when it carries a synthetic marker (ROE/DOE/POE personas, 555-01xx or area-code-555 phones, any
-impossible NANP number (area code or exchange starting 0/1), the 4711/471 synthetic number block, CCM-471NN, the
-999-prefixed sentinel record numbers, example.com, or the words synthetic/fixture/placeholder/sentinel) or sits in a
-fixture path (test/fixture/mock directories, *.test.* / *.spec.* files, files named *fixtures.*, Sources/AgentChecks).
+impossible NANP number (area code or exchange starting 0/1), the practice's own published phone and fax, the 4711/471
+synthetic number block, CCM-471NN, the 999-prefixed sentinel record numbers, example.com, or the words synthetic/fixture/
+placeholder/sentinel) or sits in a fixture path (test/fixture/mock directories, *.test.* / *.spec.* files, files named *fixtures.*, Sources/AgentChecks).
 Labelled DOBs: 1900-01-01 and 1970-01-01 are documented placeholders; years before 1900 or after this year are
 impossible; years 2020 to this year count only in value position (`DOB: 20xx-mm-dd`, `"dob": "..."`), not after prose
 (so `dob: new Date("20xx-mm-dd")` is not flagged either: letters sit between label and date).
@@ -58,6 +58,11 @@ ALLOWED_SHAPES = ("Use the allowed test-data shapes: ROE/DOE/POE personas, 555-0
                   "or move the data out of the repo.")
 
 
+# The practice's own published phone and fax (letterhead, website, fax cover, forms): business numbers, not patient data.
+# Exact numbers only; any other number, including a neighbour of these, is still checked. Never add a person's number here.
+PRACTICE_NUMBERS = frozenset({"8053928700", "8554204671"})
+
+
 def impossible_nanp(digits):
     """True for a 10-digit US number that cannot be assigned: area code 555, or area code / exchange starting 0 or 1."""
     return digits[:3] == "555" or digits[0] in "01" or digits[3] in "01"
@@ -70,7 +75,7 @@ def synthetic(name, m):
     if name == "phone":
         digits = re.sub(r"\D", "", text)
         digits = digits[-10:] if len(digits) >= 10 else digits
-        return len(digits) == 10 and impossible_nanp(digits)
+        return len(digits) == 10 and (impossible_nanp(digits) or digits in PRACTICE_NUMBERS)
     if name == "dob":
         gap, value = m.group(1), m.group(2)
         if PLACEHOLDER_DOB.match(value):

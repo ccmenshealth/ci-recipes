@@ -21,6 +21,13 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 GUARD = os.environ.get("GUARD") or os.path.join(HERE, "..", "identifier-guard.py")
 
 
+def load_guard_from(path):
+    spec = importlib.util.spec_from_file_location("identifier_guard_" + str(abs(hash(path))), path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def load_guard():
     spec = importlib.util.spec_from_file_location("identifier_guard", GUARD)
     mod = importlib.util.module_from_spec(spec)
@@ -245,6 +252,29 @@ class G5_ImpossibleNanpNumbersAreSynthetic(unittest.TestCase):
     def test_a_possible_number_is_still_flagged(self):
         self.assertEqual(patterns(SRC, "(" + d("2", 3) + ") " + d("3", 3) + "-" + d("4", 4)), ["phone"])
         self.assertEqual(patterns(SRC, "+1 " + DASHED), ["phone"])
+
+
+class PracticeNumbers(unittest.TestCase):
+    """The practice's own published phone and fax are business values, exempt in every format; their neighbours are not.
+    The numbers come from the canonical script (never typed here), so GUARD=<pre-fix copy> fails these rows."""
+    NUMBERS = sorted(load_guard_from(os.path.join(HERE, "..", "identifier-guard.py")).PRACTICE_NUMBERS)
+
+    def formats(self, n):
+        a, e, l = n[:3], n[3:6], n[6:]
+        return ["call %s-%s-%s" % (a, e, l), "call %s.%s.%s" % (a, e, l), "call (%s) %s-%s" % (a, e, l),
+                "call +1%s" % n, "phone: %s" % n, "call %s %s %s" % (a, e, l)]
+
+    def test_practice_numbers_are_exempt_in_every_format(self):
+        self.assertEqual(len(self.NUMBERS), 2)
+        for n in self.NUMBERS:
+            for line in self.formats(n):
+                self.assertEqual(patterns(SRC, line), [], line.split()[0])
+
+    def test_a_neighbouring_number_is_still_flagged(self):
+        for n in self.NUMBERS:
+            other = n[:-1] + str((int(n[-1]) + 1) % 10)
+            for line in self.formats(other):
+                self.assertEqual(patterns(SRC, line), ["phone"])
 
 
 class FailureMessage(unittest.TestCase):
