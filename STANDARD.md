@@ -157,7 +157,7 @@ the hook, memory. `--dry-run` builds and checks the tree and prints the GitHub c
 
 A repo that skipped the template has no caller, so nothing in it runs the check. `./sweep.sh` (read-only) lists every
 non-archived repo of the owner, reports whether it has the caller with `standard: true`, and with `--check` runs
-`check.py` on a fresh clone of each. This repo is public and its CI token cannot read private repos, so the sweep runs
+`check.py` on a fresh clone of each. This repo's CI token cannot read other repos, so the sweep runs
 from the owner's Mac (`gh` logged in as the owner); the owner's weekly scheduled task is its intended caller.
 
 ## Existing repos
