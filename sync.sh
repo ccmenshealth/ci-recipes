@@ -59,7 +59,8 @@ RECIPES_REV="$(git -C "$HERE" rev-parse --short HEAD)"
 # full_scan <script> <clone>: every tracked regular file (no symlinks, no submodule gitlinks) through the guard in --files
 # mode; prints "path:line pattern" lines sorted.
 full_scan() {
-  ( cd "$2" && git ls-files -z | while IFS= read -r -d '' f; do if [ -f "$f" ] && [ ! -L "$f" ]; then printf '%s\0' "$f"; fi; done \
+  ( cd "$2" || exit 1
+    git ls-files -z | while IFS= read -r -d '' f; do if [ -f "$f" ] && [ ! -L "$f" ]; then printf '%s\0' "$f"; fi; done \
       | xargs -0 python3 "$1" --files 2>/dev/null || true ) | { grep '^  ' || true; } | sed 's/^  //' | sort
 }
 
