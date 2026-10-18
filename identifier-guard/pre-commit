@@ -1,0 +1,7 @@
+#!/bin/sh
+# Enable once per clone: git config core.hooksPath .githooks
+root="$(git rev-parse --show-toplevel)"
+for py in python3 python py; do
+  if command -v "$py" >/dev/null 2>&1; then exec "$py" "$root/scripts/identifier-guard.py" --staged; fi
+done
+echo "identifier guard: python not found; commit refused" >&2; exit 1

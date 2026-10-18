@@ -1,0 +1,67 @@
+name: identifier-guard (reusable)
+# Called by every ccmenshealth repo's .github/workflows/identifier-guard.yml (see identifier-guard/caller-workflow.yml).
+# 1. Fails when the caller's scripts/identifier-guard.py is not byte-identical to identifier-guard/identifier-guard.py here
+#    (the copy in each repo is what the pre-commit hook runs offline; this keeps the 16 copies from drifting).
+# 2. Runs the caller's own copy on added lines: three-dot diff base...head on pull_request, the default branch's last
+#    8 days on schedule / workflow_dispatch.
+# Public repo: no secrets, no self-hosted runner. Private callers may pass runs-on for their own Linux runner.
+# Cost: one short job per run, billed as 1 GitHub-hosted Linux minute ($0.006) when runs-on is ubuntu-latest.
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        description: Runner label for the job (ubuntu-latest, or a self-hosted Linux label on a private caller)
+        type: string
+        required: false
+        default: ubuntu-latest
+permissions:
+  contents: read
+jobs:
+  guard:
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: 5
+    steps:
+      - name: Check out the calling repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check out ci-recipes at the called ref
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ccmenshealth/ci-recipes
+          # job.workflow_sha = the commit of the workflow file that defines this job, i.e. this reusable workflow at the
+          # ref the caller pinned (@v1). The next step fails if it is empty rather than silently comparing against main.
+          ref: ${{ job.workflow_sha }}
+          path: .ci-recipes
+          persist-credentials: false
+      - name: Fail if this repo's copy differs from the canonical script
+        run: |
+          if [ -z "$GITHUB_JOB_WORKFLOW_SHA" ]; then
+            echo "::error::job.workflow_sha is empty; cannot tell which ci-recipes commit was called. Refusing to pass."
+            exit 1
+          fi
+          if [ ! -f scripts/identifier-guard.py ]; then
+            echo "::error::scripts/identifier-guard.py is missing. Fix: from a ci-recipes clone run ./sync.sh --only $GITHUB_REPOSITORY (or copy identifier-guard/identifier-guard.py to scripts/identifier-guard.py) and commit."
+            exit 1
+          fi
+          if ! cmp -s scripts/identifier-guard.py .ci-recipes/identifier-guard/identifier-guard.py; then
+            echo "::error::scripts/identifier-guard.py differs from ccmenshealth/ci-recipes identifier-guard/identifier-guard.py@${GITHUB_JOB_WORKFLOW_SHA:0:8}. Fix: from a ci-recipes clone run ./sync.sh --only $GITHUB_REPOSITORY (or copy the canonical file over scripts/identifier-guard.py) and commit; never edit the copy in one repo."
+            exit 1
+          fi
+          echo "scripts/identifier-guard.py matches ci-recipes@${GITHUB_JOB_WORKFLOW_SHA:0:8} (blob $(git hash-object scripts/identifier-guard.py | cut -c1-8))"
+        env:
+          GITHUB_JOB_WORKFLOW_SHA: ${{ job.workflow_sha }}
+      - name: Scan added lines with this repo's copy
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          rm -rf .ci-recipes
+          if [ "$EVENT" = "pull_request" ]; then
+            exec python3 scripts/identifier-guard.py --three-dot --base "$PR_BASE" --head "$PR_HEAD"
+          fi
+          BASE="$(git rev-list -1 --before='8 days ago' HEAD || true)"
+          if [ -z "$BASE" ]; then BASE="$(git hash-object -t tree /dev/null)"; fi
+          exec python3 scripts/identifier-guard.py --base "$BASE" --head HEAD
