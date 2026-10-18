@@ -4,8 +4,12 @@ name: identifier-guard (reusable)
 #    (the copy in each repo is what the pre-commit hook runs offline; this keeps the 16 copies from drifting).
 # 2. Runs the caller's own copy on added lines: three-dot diff base...head on pull_request, the default branch's last
 #    8 days on schedule / workflow_dispatch.
+# 3. Only when the caller passes `standard: true`: runs repo-standard/check.py (STANDARD.md) from the called ref against
+#    the caller, after the scan, so a standard failure never hides the scan result. Default false: callers that do not
+#    opt in run exactly the steps above.
 # Public repo: no secrets, no self-hosted runner. Private callers may pass runs-on for their own Linux runner.
-# Cost: one short job per run, billed as 1 GitHub-hosted Linux minute ($0.006) when runs-on is ubuntu-latest.
+# Cost: one short job per run, billed as 1 GitHub-hosted Linux minute ($0.006) when runs-on is ubuntu-latest; the
+# standard step adds about a second inside that minute ($0).
 on:
   workflow_call:
     inputs:
@@ -14,6 +18,11 @@ on:
         type: string
         required: false
         default: ubuntu-latest
+      standard:
+        description: Also run the repo-standard check (repo-standard/check.py, STANDARD.md) after the scan
+        type: boolean
+        required: false
+        default: false
 permissions:
   contents: read
 jobs:
@@ -37,6 +46,10 @@ jobs:
           persist-credentials: false
       - name: Fail if this repo's copy differs from the canonical script
         run: |
+          # Keep the canonical files for the standard step; the scan step removes .ci-recipes from the workspace.
+          mkdir -p "$RUNNER_TEMP/ci-recipes/repo-standard" "$RUNNER_TEMP/ci-recipes/identifier-guard"
+          cp .ci-recipes/repo-standard/check.py "$RUNNER_TEMP/ci-recipes/repo-standard/"
+          cp .ci-recipes/identifier-guard/identifier-guard.py .ci-recipes/identifier-guard/pre-commit "$RUNNER_TEMP/ci-recipes/identifier-guard/"
           if [ -z "$GITHUB_JOB_WORKFLOW_SHA" ]; then
             echo "::error::job.workflow_sha is empty; cannot tell which ci-recipes commit was called. Refusing to pass."
             exit 1
@@ -65,3 +78,12 @@ jobs:
           BASE="$(git rev-list -1 --before='8 days ago' HEAD || true)"
           if [ -z "$BASE" ]; then BASE="$(git hash-object -t tree /dev/null)"; fi
           exec python3 scripts/identifier-guard.py --base "$BASE" --head HEAD
+      - name: Check the repo standard (STANDARD.md in ci-recipes)
+        if: ${{ !cancelled() && inputs.standard }}
+        env:
+          VISIBILITY: ${{ github.event.repository.visibility }}
+        run: |
+          if [ "$VISIBILITY" = "public" ]; then
+            exec python3 "$RUNNER_TEMP/ci-recipes/repo-standard/check.py" --root . --public
+          fi
+          exec python3 "$RUNNER_TEMP/ci-recipes/repo-standard/check.py" --root .

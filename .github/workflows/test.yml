@@ -1,5 +1,5 @@
 name: test
-# Tests the canonical identifier guard and scans this repo with it.
+# Tests the canonical identifier guard and the repo-standard check, lints the scripts, and scans this repo with the guard.
 # Cost: a few GitHub-hosted Linux runs a month, each billed as 1 minute ($0.006): under $0.10/month.
 on:
   pull_request:
@@ -20,11 +20,21 @@ jobs:
         with:
           persist-credentials: false
       - name: Lint (byte-compile, warnings are errors)
-        run: python3 -W error -m py_compile identifier-guard/identifier-guard.py identifier-guard/tests/test_identifier_guard.py
-      - name: Unit tests
+        run: >-
+          python3 -W error -m py_compile identifier-guard/identifier-guard.py identifier-guard/tests/test_identifier_guard.py
+          repo-standard/check.py repo-standard/tests/test_check.py
+      - name: Unit tests (identifier guard)
         run: python3 -m unittest discover -s identifier-guard/tests -p 'test_*.py' -v
-      - name: Shell syntax
-        run: bash -n sync.sh && sh -n identifier-guard/pre-commit
+      - name: Unit tests (repo standard)
+        run: python3 -m unittest discover -s repo-standard/tests -p 'test_*.py' -v
+      - name: Shell lint
+        run: |
+          shellcheck -x sync.sh new-repo.sh lib/apply.sh
+          sh -n identifier-guard/pre-commit
+      - name: new-repo.sh dry run (private and public)
+        run: |
+          ./new-repo.sh ci-dry-run --private --dry-run
+          ./new-repo.sh ci-dry-run --public --dry-run
       - name: Scan this repo with the canonical guard (whole files; regular files only, no symlinks or gitlinks)
         run: |
           git ls-files -z | while IFS= read -r -d '' f; do [ -f "$f" ] && [ ! -L "$f" ] && printf '%s\0' "$f"; done \
