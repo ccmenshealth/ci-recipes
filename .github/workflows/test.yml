@@ -31,7 +31,7 @@ jobs:
         run: python3 -m unittest discover -s lib/tests -p 'test_*.py' -v
       - name: Shell lint
         run: |
-          shellcheck -x sync.sh new-repo.sh sweep.sh lib/apply.sh
+          shellcheck -x sync.sh new-repo.sh sweep.sh lib/apply.sh org-move/move-repo.sh
           sh -n identifier-guard/pre-commit
       - name: new-repo.sh dry run (private and public)
         run: |
