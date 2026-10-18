@@ -39,6 +39,7 @@ if [ -z "$NAME" ] || [ -z "$VIS" ]; then echo "usage: ./new-repo.sh <name> --pri
 if [ "$DRY" = 1 ]; then
   PIN_TAG="${PIN_TAG:-$(latest_release_tag .)}"
   if [ -z "$PIN_TAG" ]; then PIN_TAG=v1.0; echo "dry run: no local v1.N tag; the caller shows @$PIN_TAG" >&2; fi
+  release_tag_shape "$PIN_TAG" || exit 2
 else
   PIN_TAG="${PIN_TAG:-$(latest_release_tag origin)}"
   check_pin_tag "$PIN_TAG" || exit 2

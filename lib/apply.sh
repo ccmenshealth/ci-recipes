@@ -18,25 +18,37 @@ latest_release_tag() {
     | sort -t. -k2,2n | tail -n 1
 }
 
-# check_pin_tag <tag>: the tag is a v1.N tag on origin whose guard script and hook are this clone's canonical files, so a
-# caller pinned to it passes the reusable workflow's hash check. Prints the reason and returns 1 otherwise.
+# release_tag_shape <tag>: true for an exact v1.N tag; anything else (v1, v1.2.3, a branch, sed or shell syntax) is refused.
+release_tag_shape() {
+  [[ "$1" =~ ^v1\.[0-9]+$ ]] || { echo "pin tag '$1' is not an exact v1.N release tag" >&2; return 1; }
+}
+
+# check_pin_tag <tag>: the tag is a v1.N tag on origin whose guard script, hook and standard check are this clone's
+# files, so a caller pinned to it passes the reusable workflow's hash check and runs the check.py this clone ran.
+# Prints the reason and returns 1 otherwise.
 check_pin_tag() {
   local tag="$1" f
-  if ! [[ "$tag" =~ ^v1\.[0-9]+$ ]]; then echo "pin tag '$tag' is not an exact v1.N release tag" >&2; return 1; fi
+  release_tag_shape "$tag" || return 1
   if ! git -C "$RECIPES" fetch -q --no-tags origin "refs/tags/$tag" 2>/dev/null; then
     echo "tag $tag is not on origin; cut and push it first (git tag $tag <commit> && git push origin $tag)" >&2; return 1
   fi
-  for f in identifier-guard/identifier-guard.py identifier-guard/pre-commit; do
+  for f in identifier-guard/identifier-guard.py identifier-guard/pre-commit repo-standard/check.py; do
     if [ "$(git -C "$RECIPES" rev-parse "FETCH_HEAD:$f" 2>/dev/null)" != "$(git -C "$RECIPES" hash-object "$RECIPES/$f")" ]; then
       echo "tag $tag has a different $f than this clone; check out the tag, or merge and cut a new tag" >&2; return 1
     fi
   done
 }
 
-# place_caller <source caller> <dest>: the caller with its ci-recipes reference pinned to PIN_TAG.
+# place_caller <source caller> <dest>: the caller with its ci-recipes reference pinned to PIN_TAG (checked for shape first,
+# so nothing else ever reaches sed). Writes nothing and returns 1 if the source has no pinnable uses: line.
 place_caller() {
+  local out
   [ -n "${PIN_TAG:-}" ] || { echo "PIN_TAG is not set" >&2; return 1; }
-  sed -E "s#^( *uses: ccmenshealth/ci-recipes/\.github/workflows/identifier-guard\.yml)@[^[:space:]]*#\1@${PIN_TAG}#" "$1" > "$2"
+  release_tag_shape "$PIN_TAG" || return 1
+  out="$(sed -E "s#^( *uses: ccmenshealth/ci-recipes/\.github/workflows/identifier-guard\.yml)@[^[:space:]]*#\1@${PIN_TAG}#" "$1")" || return 1
+  grep -qE "^ *uses: ccmenshealth/ci-recipes/\.github/workflows/identifier-guard\.yml@${PIN_TAG}([[:space:]]|$)" <<< "$out" \
+    || { echo "$1 has no ci-recipes identifier-guard uses: line to pin" >&2; return 1; }
+  printf '%s\n' "$out" > "$2"
 }
 
 # caller_for <dir>: the caller workflow a repo should carry. A repo that has opted into the standard (it has

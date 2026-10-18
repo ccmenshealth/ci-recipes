@@ -55,6 +55,7 @@ for f in "$GUARD_SRC" "$HOOK_SRC" "$PLAIN_CALLER" "$STANDARD_CALLER" "$TEMPLATE_
   [ -f "$f" ] || { echo "run from a ci-recipes clone ($f missing)" >&2; exit 2; }
 done
 PIN_TAG="${PIN_TAG:-$(latest_release_tag origin)}"
+release_tag_shape "$PIN_TAG" || exit 2
 if ! check_pin_tag "$PIN_TAG"; then
   if [ "$DRY" = 1 ]; then echo "dry run: continuing with @$PIN_TAG anyway" >&2; else exit 2; fi
 fi

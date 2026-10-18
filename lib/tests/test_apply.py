@@ -57,6 +57,25 @@ class CallerPinsTheTag(unittest.TestCase):
         self.assertEqual(len(got), len(src))
         self.assertEqual([i for i, (a, b) in enumerate(zip(got, src)) if a != b], [i for i, l in enumerate(src) if USES in l])
 
+    def test_the_trailing_comment_is_kept(self):
+        bash('apply_guard "%s"' % self.td, env={"PIN_TAG": "v1.7"})
+        line = [l for l in open(os.path.join(self.td, ".github/workflows/identifier-guard.yml")) if USES in l]
+        self.assertEqual(line, ["    " + USES + "v1.7   # exact release tag; sync.sh writes the current one\n"])
+
+    def test_a_tag_that_is_not_v1_n_is_refused_and_writes_nothing(self):
+        for tag in ("v1.5#w %s/pwned" % self.td, "v1.5&", "v1", "main", "v1.5 "):
+            dest = os.path.join(self.td, "caller.yml")
+            r = bash('place_caller "$RECIPES/identifier-guard/caller-workflow.yml" "%s"' % dest, env={"PIN_TAG": tag})
+            self.assertNotEqual(r.returncode, 0, tag)
+            self.assertFalse(os.path.exists(dest), tag)
+            self.assertEqual(sorted(os.listdir(self.td)), [], tag)
+
+    def test_a_source_without_the_uses_line_is_refused(self):
+        src = os.path.join(self.td, "src.yml")
+        open(src, "w").write("name: x\njobs: {}\n")
+        r = bash('place_caller "%s" "%s/out.yml"' % (src, self.td), env={"PIN_TAG": "v1.7"})
+        self.assertNotEqual(r.returncode, 0)
+
     def test_no_pin_tag_is_an_error(self):
         r = bash('apply_guard "%s"' % self.td, env={"PIN_TAG": ""})
         self.assertNotEqual(r.returncode, 0)
@@ -68,19 +87,20 @@ class CallerPinsTheTag(unittest.TestCase):
 
 
 class Tags(unittest.TestCase):
-    """latest_release_tag reads origin; check_pin_tag refuses a tag whose guard is not this clone's."""
+    """latest_release_tag reads origin; check_pin_tag refuses a tag whose guard, hook or standard check is not this clone's."""
+    CANONICAL = ("identifier-guard/identifier-guard.py", "identifier-guard/pre-commit", "repo-standard/check.py")
 
     def setUp(self):
         self.td = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.td)
         src = os.path.join(self.td, "src")
-        os.makedirs(os.path.join(src, "identifier-guard"))
-        for f in ("identifier-guard.py", "pre-commit"):
-            shutil.copy(os.path.join(ROOT, "identifier-guard", f), os.path.join(src, "identifier-guard", f))
+        for f in self.CANONICAL:
+            os.makedirs(os.path.dirname(os.path.join(src, f)), exist_ok=True)
+            shutil.copy(os.path.join(ROOT, f), os.path.join(src, f))
         git(src, "init", "-q", "-b", "main")
         git(src, "add", "-A")
         git(src, "commit", "-q", "-m", "c1")
-        for t in ("v1", "v1.2", "v1.9", "v1.10", "v2-rc", "v1.3-test"):
+        for t in ("v1", "v1.2", "v1.9", "v1.10", "v2-rc", "v1.3-test", "v1.10.1", "v1.99-rc"):
             git(src, "tag", t)
         self.bare = os.path.join(self.td, "bare.git")
         git(self.td, "clone", "-q", "--bare", src, self.bare)
@@ -96,12 +116,16 @@ class Tags(unittest.TestCase):
         r = bash("check_pin_tag v1.10", recipes=self.clone)
         self.assertEqual(r.returncode, 0, r.stderr)
 
-    def test_check_pin_tag_refuses_a_tag_whose_guard_differs(self):
-        with open(os.path.join(self.clone, "identifier-guard", "identifier-guard.py"), "a") as f:
-            f.write("# changed\n")
-        r = bash("check_pin_tag v1.10", recipes=self.clone)
-        self.assertNotEqual(r.returncode, 0)
-        self.assertIn("v1.10", r.stderr)
+    def test_check_pin_tag_refuses_a_tag_whose_canonical_files_differ(self):
+        for f in self.CANONICAL:
+            path = os.path.join(self.clone, f)
+            original = open(path).read()
+            with open(path, "a") as fh:
+                fh.write("# changed\n")
+            r = bash("check_pin_tag v1.10", recipes=self.clone)
+            open(path, "w").write(original)
+            self.assertNotEqual(r.returncode, 0, f)
+            self.assertIn("v1.10", r.stderr, f)
 
     def test_check_pin_tag_refuses_a_missing_or_moving_tag(self):
         for tag in ("v1.99", "v1", "main"):
