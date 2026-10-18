@@ -37,12 +37,12 @@
 # Requires: git, gh (logged in as the owner), python3, perl, shasum; az (logged in) for the az phases.
 # Bash 3.2 compatible (macOS /bin/bash).
 # Env: ORG (default ccmhinc), OLD_OWNER (default ccmenshealth), SRC_BRANCH (default main), WORK (scratch dir), BUNDLES,
-#      EVIDENCE, GUARD_TAG (default v1.6), CANON_OWNER (owner whose ci-recipes@GUARD_TAG runs the certification; default OLD_OWNER).
+#      EVIDENCE, GUARD_TAG (default v1.7), CANON_OWNER (owner whose ci-recipes@GUARD_TAG runs the certification; default OLD_OWNER).
 set -euo pipefail
 
 ORG="${ORG:-ccmhinc}"
 OLD_OWNER="${OLD_OWNER:-ccmenshealth}"
-GUARD_TAG="${GUARD_TAG:-v1.6}"
+GUARD_TAG="${GUARD_TAG:-v1.7}"
 SRC_BRANCH="${SRC_BRANCH:-main}"
 [[ "$SRC_BRANCH" =~ ^[A-Za-z0-9._/-]+$ ]] || { echo "FAIL: bad SRC_BRANCH" >&2; exit 1; }
 CANON_OWNER="${CANON_OWNER:-}"   # set below: OLD_OWNER for ci-recipes itself, ORG for every later repo
@@ -56,7 +56,7 @@ PHRASES='\bPHI\b|protected health|patient data|\bleak|exposure|exposed|breach|in
 die() { echo "FAIL: $*" >&2; exit 1; }
 say() { echo "== $*"; }
 
-usage() { sed -n '2,35p' "$0" >&2; exit 2; }
+usage() { sed -n '2,/^set -euo pipefail/p' "$0" | sed '$d' >&2; exit 2; }
 [ $# -ge 2 ] || usage
 PHASE="$1"; REPO="$2"; shift 2
 [[ "$REPO" =~ ^[A-Za-z0-9._-]+$ ]] || die "bad repo name '$REPO'"
@@ -69,7 +69,8 @@ exec > >(tee -a "$EV/$PHASE.txt") 2>&1
 say "$PHASE $OLD -> $NEW ($(date -u +%Y-%m-%dT%H:%M:%SZ))"
 
 repo_exists() { gh api "repos/$1" --silent >/dev/null 2>&1; }
-old_main_sha() { gh api "repos/$OLD/commits/$SRC_BRANCH" --jq .sha; }
+# Head of the personal SRC_BRANCH (branches/ endpoint: a tag of the same name never matches).
+src_head_sha() { gh api "repos/$OLD/branches/$SRC_BRANCH" --jq .commit.sha; }
 
 prepared_tree() {
   [ -f "$PREP.tree" ] || die "no prepared tree; run: $0 prepare $REPO"
@@ -80,7 +81,7 @@ prepared_tree() {
 check_prepared_current() {
   local want; want="$(cat "$PREP.source" 2>/dev/null || true)"
   [ -n "$want" ] || die "no recorded source commit; run: $0 prepare $REPO"
-  [ "$want" = "$(old_main_sha)" ] || die "personal $SRC_BRANCH moved since prepare (prepared from ${want:-nothing}); re-run prepare + certify"
+  [ "$want" = "$(src_head_sha)" ] || die "personal $SRC_BRANCH moved since prepare (prepared from ${want:-nothing}); re-run prepare + certify"
 }
 
 # git grep that fails closed: rc 0 (hits) and 1 (none) are answers; anything else (bad pattern, not a repo) stops.
@@ -107,7 +108,7 @@ phase_preflight() {
   def="$(gh api "repos/$OLD" --jq .default_branch)"; arch="$(gh api "repos/$OLD" --jq .archived)"
   [ "$def" = "$SRC_BRANCH" ] || die "$OLD default branch is '$def', not $SRC_BRANCH (SRC_BRANCH=$def moves it; the org branch is main)"
   [ "$arch" = false ] || die "$OLD is already archived"
-  echo "$OLD default branch $SRC_BRANCH at $(old_main_sha) (org branch: main)"
+  echo "$OLD default branch $SRC_BRANCH at $(src_head_sha) (org branch: main)"
   local prs; prs="$(gh pr list -R "$OLD" --state open --json number,title,isDraft --jq '.[] | "#\(.number) draft=\(.isDraft) \(.title)"')"
   if [ -n "$prs" ]; then echo "open PRs (the lead decides; they do not move):"; echo "$prs"; die "open PRs on $OLD"; fi
   echo "open PRs: 0"
@@ -120,7 +121,7 @@ phase_bundle() {
   local v="$WORK/bundle-verify.git"   # empty repo: a full bundle has no prerequisites, so this proves it is self-contained
   mkdir -p "$BUNDLES"; [ -d "$v" ] || git init -q --bare "$v"
   if [ -f "$b" ] && git -C "$v" bundle verify -q "$b" 2>/dev/null \
-     && [ "$(git bundle list-heads "$b" "refs/heads/$SRC_BRANCH" | cut -d' ' -f1)" = "$(old_main_sha)" ]; then
+     && [ "$(git bundle list-heads "$b" "refs/heads/$SRC_BRANCH" | cut -d' ' -f1)" = "$(src_head_sha)" ]; then
     say "bundle exists and verifies: $b"
   else
     [ -f "$b" ] && echo "existing bundle is stale or unverifiable; rebuilding"
@@ -137,7 +138,7 @@ phase_bundle() {
 }
 
 phase_prepare() {
-  local src; src="$(old_main_sha)"
+  local src; src="$(src_head_sha)"
   rm -rf "$PREP"; git clone -q --no-tags --single-branch --branch "$SRC_BRANCH" "https://github.com/$OLD.git" "$PREP"
   [ "$(git -C "$PREP" rev-parse HEAD)" = "$src" ] || die "clone HEAD differs from personal $SRC_BRANCH"
   git -C "$PREP" status --porcelain | grep -q . && die "fresh clone is dirty"
@@ -186,6 +187,8 @@ phase_prepare() {
       echo "references to the branch name '$SRC_BRANCH' (the org branch is main; file:line, for the record):"
       local brefs; brefs="$(ggrep -nI -w -F -e "$SRC_BRANCH" | cut -d: -f1,2)"
       printf '%s\n' "${brefs:-  none}"
+      # A workflow filter on the old name would stop the org repo's main from triggering anything.
+      if printf '%s\n' "$brefs" | grep -q '^\.github/workflows/'; then die "workflow files name '$SRC_BRANCH'; change them to main on $OLD first"; fi
     fi
   )
   local tree; tree="$(git -C "$PREP" write-tree)"
@@ -304,65 +307,86 @@ phase_settings() {
 
 # One app registration by exact display name; prints its appId.
 app_id() {
-  local ids; ids="$(az ad app list --display-name "$1" --query '[].appId' -o tsv)" || die "az ad app list failed"
+  # --display-name is a prefix filter; the query keeps exact matches only.
+  local ids; ids="$(az ad app list --display-name "$1" --query "[?displayName=='$1'].appId" -o tsv)" || die "az ad app list failed"
   [ "$(printf '%s\n' "$ids" | grep -c .)" = 1 ] || die "need exactly one app registration named '$1' (found $(printf '%s\n' "$ids" | grep -c .))"
   printf '%s' "$ids"
+}
+
+# Reads the app's federated credentials (JSON) on stdin. "plan DIR" writes one create spec per missing twin into DIR;
+# "check" fails unless every twin exists. The twin of repo:OLD:ref:refs/heads/SRC_BRANCH is repo:NEW:ref:refs/heads/main
+# (the org branch); other suffixes (pull_request, environment:...) are kept.
+oidc_twins() {
+  O="$OLD" N="$NEW" ORG="$ORG" B="$SRC_BRANCH" python3 -c '
+import json, os, sys
+mode = sys.argv[1]; creds = json.load(sys.stdin)
+o, n, org, b = (os.environ[k] for k in ("O", "N", "ORG", "B"))
+have = {c["subject"] for c in creds}; names = {c["name"] for c in creds}
+old = [c for c in creds if c["subject"].startswith("repo:%s:" % o)]
+if not old: sys.exit("no federated credential with subject repo:%s:..." % o)
+missing = []
+for i, c in enumerate(old):
+    if c["issuer"] != "https://token.actions.githubusercontent.com": sys.exit("credential %s: unexpected issuer" % c["name"])
+    rest = c["subject"][len("repo:%s:" % o):]
+    if rest == "ref:refs/heads/%s" % b: rest = "ref:refs/heads/main"
+    subj = "repo:%s:%s" % (n, rest)
+    if subj in have: print("exists: %s" % subj); continue
+    missing.append(subj)
+    if mode == "plan":
+        name = (c["name"][:120 - len(org) - 1] + "-" + org)
+        if name in names: sys.exit("twin name %s already taken by another credential" % name)
+        names.add(name)
+        twin = {"name": name, "issuer": c["issuer"], "subject": subj, "audiences": c["audiences"],
+                "description": "%s, organization repository" % (c.get("description") or c["name"])}
+        json.dump(twin, open(os.path.join(sys.argv[2], "%02d.json" % i), "w")); print("create: %s (%s)" % (name, subj))
+if mode == "check" and missing: sys.exit("missing twin subjects: %s" % missing)
+' "$@"
 }
 
 phase_oidc() {
   local app="${1:-}"; [ -n "$app" ] || die "usage: $0 oidc $REPO <app registration display name>"
   local id; id="$(app_id "$app")"
   local spec="$WORK/$REPO-oidc"; rm -rf "$spec"; mkdir -p "$spec"
-  # For each repo:OLD:<rest> credential with the GitHub issuer, a twin repo:NEW:<rest> unless that subject exists already.
-  az ad app federated-credential list --id "$id" -o json \
-    | O="$OLD" N="$NEW" ORG="$ORG" D="$spec" python3 -c '
-import json, os, sys
-creds = json.load(sys.stdin); o, n, d = os.environ["O"], os.environ["N"], os.environ["D"]
-have = {c["subject"] for c in creds}
-old = [c for c in creds if c["subject"].startswith("repo:%s:" % o)]
-if not old: sys.exit("no federated credential with subject repo:%s:..." % o)
-for i, c in enumerate(old):
-    if c["issuer"] != "https://token.actions.githubusercontent.com": sys.exit("credential %s: unexpected issuer" % c["name"])
-    subj = "repo:%s:%s" % (n, c["subject"][len("repo:%s:" % o):])
-    if subj in have: print("exists: %s" % subj); continue
-    twin = {"name": (c["name"] + "-" + os.environ["ORG"])[:120], "issuer": c["issuer"], "subject": subj,
-            "audiences": c["audiences"], "description": "%s, organization repository" % (c.get("description") or c["name"])}
-    json.dump(twin, open(os.path.join(d, "%02d.json" % i), "w")); print("create: %s (%s)" % (twin["name"], subj))
-' || die "federated credential plan failed"
+  az ad app federated-credential list --id "$id" -o json | oidc_twins plan "$spec" || die "federated credential plan failed"
   if [ "${PLAN_ONLY:-}" = 1 ]; then say "oidc plan only (PLAN_ONLY=1): nothing created"; return 0; fi
   local f
   for f in "$spec"/*.json; do
     [ -f "$f" ] || continue
-    az ad app federated-credential create --id "$id" --parameters "@$f" --query '{name:name,subject:subject}' -o tsv || die "create failed for $f"
+    az ad app federated-credential create --id "$id" --parameters "@$f" --query '[name,subject]' -o tsv || die "create failed for $f"
   done
-  echo "read back (app $app, appId ${id:0:8}…):"
+  echo "read back (app $app, appId ${id:0:8}...):"
   az ad app federated-credential list --id "$id" --query '[].[name,subject]' -o tsv
-  az ad app federated-credential list --id "$id" -o json | N="$NEW" O="$OLD" python3 -c '
-import json, os, sys
-s = [c["subject"] for c in json.load(sys.stdin)]
-old = [x for x in s if x.startswith("repo:%s:" % os.environ["O"])]
-missing = ["repo:%s:%s" % (os.environ["N"], x.split(":", 2)[2]) for x in old if "repo:%s:%s" % (os.environ["N"], x.split(":", 2)[2]) not in s]
-sys.exit("missing twin subjects: %s" % missing if missing else 0)' || die "read-back: a twin subject is missing"
+  az ad app federated-credential list --id "$id" -o json | oidc_twins check >/dev/null || die "read-back: a twin subject is missing"
   say "oidc OK (old subjects stay until $OLD is archived)"
 }
 
-# Pipes one value from stdin into an org repo secret; prints the name and the length only.
+# Pipes stdin straight into an org repo secret (the value never sits in a shell variable, so bash -x cannot print it);
+# prints the name and the byte count.
 set_secret() {
-  local name="$1" v; v="$(cat)"; [ -n "$v" ] || die "empty value for $name"
-  printf '%s' "$v" | gh secret set "$name" -R "$NEW" || die "gh secret set $name failed"
-  echo "set $name (${#v} chars)"
+  local name="$1" n
+  n="$(tee >(gh secret set "$name" -R "$NEW" >/dev/null 2>&1; echo $? > "$WORK/.secret-rc") | wc -c | tr -d ' ')"
+  wait
+  [ "$n" -gt 0 ] || die "empty value for $name"
+  [ "$(cat "$WORK/.secret-rc")" = 0 ] || die "gh secret set $name failed"
+  rm -f "$WORK/.secret-rc"
+  echo "set $name ($n bytes)"
 }
 
 phase_azure_secrets() {
   local app="${1:-}"; [ -n "$app" ] || die "usage: $0 azure-secrets $REPO <app registration display name>"
   repo_exists "$NEW" || die "$NEW does not exist; run create first"
-  local old_names; old_names=" $(gh api "repos/$OLD/actions/secrets" --jq '[.secrets[].name] | join(" ")') "
+  local id; id="$(app_id "$app")"
+  # The app must be the one oidc twinned for this repo: a wrong app would only fail at the first deploy.
+  az ad app federated-credential list --id "$id" -o json | oidc_twins check >/dev/null \
+    || die "app $app has no twin credential for $NEW; run oidc first (or this is the wrong app)"
+  echo "subscription: $(az account show --query '[name,id]' -o tsv | paste -sd' ' -) (az default; check it is the deploy target)"
+  local old_names; old_names=" $(gh api --paginate "repos/$OLD/actions/secrets" --jq '.secrets[].name' | paste -sd' ' -) "
   local n=0
-  case "$old_names" in *" AZURE_CLIENT_ID "*) app_id "$app" | set_secret AZURE_CLIENT_ID; n=$((n+1)) ;; esac
-  case "$old_names" in *" AZURE_TENANT_ID "*) az account show --query tenantId -o tsv | set_secret AZURE_TENANT_ID; n=$((n+1)) ;; esac
-  case "$old_names" in *" AZURE_SUBSCRIPTION_ID "*) az account show --query id -o tsv | set_secret AZURE_SUBSCRIPTION_ID; n=$((n+1)) ;; esac
+  case "$old_names" in *" AZURE_CLIENT_ID "*) printf '%s' "$id" | set_secret AZURE_CLIENT_ID; n=$((n+1)) ;; esac
+  case "$old_names" in *" AZURE_TENANT_ID "*) az account show --query tenantId -o tsv | tr -d '\n' | set_secret AZURE_TENANT_ID; n=$((n+1)) ;; esac
+  case "$old_names" in *" AZURE_SUBSCRIPTION_ID "*) az account show --query id -o tsv | tr -d '\n' | set_secret AZURE_SUBSCRIPTION_ID; n=$((n+1)) ;; esac
   [ "$n" -gt 0 ] || die "$OLD has none of AZURE_CLIENT_ID / AZURE_TENANT_ID / AZURE_SUBSCRIPTION_ID"
-  echo "org secrets now: $(gh api "repos/$NEW/actions/secrets" --jq '[.secrets[].name] | join(",")')"
+  echo "org secrets now: $(gh api --paginate "repos/$NEW/actions/secrets" --jq '.secrets[].name' | paste -sd, -)"
   say "azure-secrets OK"
 }
 
@@ -370,30 +394,35 @@ phase_swa_token() {
   local secret="${1:-}" swa="${2:-}" rg="${3:-}"
   [ -n "$secret" ] && [ -n "$swa" ] && [ -n "$rg" ] || die "usage: $0 swa-token $REPO <secret name> <static web app> <resource group>"
   repo_exists "$NEW" || die "$NEW does not exist; run create first"
-  az staticwebapp secrets list -n "$swa" -g "$rg" --query properties.apiKey -o tsv | set_secret "$secret"
-  echo "org secrets now: $(gh api "repos/$NEW/actions/secrets" --jq '[.secrets[].name] | join(",")')"
+  az staticwebapp secrets list -n "$swa" -g "$rg" --query properties.apiKey -o tsv | tr -d '\n' | set_secret "$secret"
+  echo "org secrets now: $(gh api --paginate "repos/$NEW/actions/secrets" --jq '.secrets[].name' | paste -sd, -)"
   say "swa-token OK"
 }
 
-# Names only: actions/secrets, actions/variables, environments.
+# Names only, one per line, sorted: repo secrets/variables, environments, and each environment's secrets/variables
+# (as env/<name>/secret:<NAME>).
 binding_names() {
-  case "$2" in
-    secret) gh api "repos/$1/actions/secrets" --jq '.secrets[].name' ;;
-    variable) gh api "repos/$1/actions/variables" --jq '.variables[].name' ;;
-    environment) gh api "repos/$1/environments" --jq '.environments[]?.name' ;;
-  esac | sort
+  {
+    gh api --paginate "repos/$1/actions/secrets" --jq '.secrets[] | "secret:" + .name'
+    gh api --paginate "repos/$1/actions/variables" --jq '.variables[] | "variable:" + .name'
+    local e
+    for e in $(gh api --paginate "repos/$1/environments" --jq '.environments[]?.name'); do
+      echo "environment:$e"
+      gh api --paginate "repos/$1/environments/$e/secrets" --jq ".secrets[] | \"env/$e/secret:\" + .name"
+      gh api --paginate "repos/$1/environments/$e/variables" --jq ".variables[] | \"env/$e/variable:\" + .name"
+    done
+  } | sort
 }
 
 phase_bindings() {
-  local kind o n m miss=0
-  for kind in secret variable environment; do
-    o="$(binding_names "$OLD" "$kind")" || die "reading $kind names on $OLD failed"
-    n="$(binding_names "$NEW" "$kind")" || die "reading $kind names on $NEW failed"
-    m="$(comm -23 <(printf '%s\n' "$o" | grep . || true) <(printf '%s\n' "$n" | grep . || true) | paste -sd, -)"
-    echo "$kind: personal [$(printf '%s' "$o" | paste -sd, -)] org [$(printf '%s' "$n" | paste -sd, -)] missing [$m]"
-    [ -z "$m" ] || miss=1
-  done
-  [ "$miss" = 0 ] || die "bindings missing on $NEW (see above)"
+  local o n m
+  o="$(binding_names "$OLD")" || die "reading binding names on $OLD failed"
+  n="$(binding_names "$NEW")" || die "reading binding names on $NEW failed"
+  m="$(comm -23 <(printf '%s\n' "$o" | grep . || true) <(printf '%s\n' "$n" | grep . || true) | paste -sd' ' -)"
+  echo "personal: $(printf '%s' "$o" | paste -sd' ' -)"
+  echo "org:      $(printf '%s' "$n" | paste -sd' ' -)"
+  echo "missing on org: ${m:-none}"
+  [ -z "$m" ] || die "bindings missing on $NEW (see above)"
   say "bindings OK"
 }
 
