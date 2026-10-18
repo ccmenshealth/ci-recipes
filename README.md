@@ -11,8 +11,12 @@ file, line and pattern only, never the matched text. Allowed test-data shapes, t
 personas, 555-01xx or area-code-555 phones (and any impossible NANP number), the 4711 number block, CCM-471NN,
 999-prefixed sentinel record numbers, the placeholder dates 1900-01-01 and 1970-01-01, example.com e-mail, and the words
 synthetic / fixture / placeholder / sentinel on the line. Record-number and DOB shapes are also allowed under fixture paths.
-Besides test data it exempts exactly one business set, `PRACTICE_NUMBERS`: the practice's own published phone and fax
-(letterhead, website, forms). Never add a person's number to it.
+Besides test data it exempts exactly two named business sets, exact numbers only: `PRACTICE_NUMBERS`, the practice's own
+published phone and fax (letterhead, website, forms), and `REGULATOR_NUMBERS`, the regulator's published toll-free number
+quoted in consent text. Never add a person's number to either. `LAST, FIRST` is not flagged when the first number after it
+is any standalone 5-digit number (the CPT / test-code shape) or a LOINC code (`12345-6`), unless a 7+ digit number or a date
+follows within 80 characters; a 6+ digit first number, a date, ZIP+4 and five digits after an upper-case state
+abbreviation still are. A labelled `MRN`/`FIN` number of any length is caught by its own pattern.
 
 Every ccmenshealth repo carries a byte-identical copy at `scripts/identifier-guard.py` (so the pre-commit hook in
 `.githooks/pre-commit` works offline) and a thin workflow that calls the reusable workflow here:

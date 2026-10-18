@@ -8,9 +8,11 @@ whose copy differs. Change it there and run sync.sh, never in a single repo.
 Checked patterns (on added lines only): SSN (dashed anywhere; labelled with or without dashes); labelled DOB
 (numeric or month-name dates) with a possible birth year; labelled MRN/FIN digits; CCM-NNNNN record numbers; US phone
 numbers (dashed, dotted, spaced, parenthesised, +1, and ten contiguous digits after a phone-ish label); LAST, FIRST
-(caps) next to a 5+ digit number; personal e-mail domains.
+(caps) next to a 5+ digit number or a date (not when that number has a 5-digit CPT / test-code or LOINC shape and no
+7+ digit number or date follows); personal e-mail domains.
 A line is allowed when it carries a synthetic marker (ROE/DOE/POE personas, 555-01xx or area-code-555 phones, any
-impossible NANP number (area code or exchange starting 0/1), the practice's own published phone and fax, the 4711/471
+impossible NANP number (area code or exchange starting 0/1), the practice's own published phone and fax, the regulator's
+published toll-free number, the 4711/471
 synthetic number block, CCM-471NN, the 999-prefixed sentinel record numbers, example.com, or the words synthetic/fixture/
 placeholder/sentinel) or sits in a fixture path (test/fixture/mock directories, *.test.* / *.spec.* files, files named *fixtures.*, Sources/AgentChecks).
 Labelled DOBs: 1900-01-01 and 1970-01-01 are documented placeholders; years before 1900 or after this year are
@@ -44,7 +46,7 @@ PATTERNS = {   # name -> list of regexes; each match is judged on its own text
     "phone": [re.compile(r"(?<![\d.])(?:\(\d{3}\)\s?\d{3}[-. ]\d{4}|\b\d{3}([-.])\d{3}\1\d{4}|\b[2-9]\d{2} [2-9]\d{2} \d{4}"
                          r"|\+1[\s-]?\d{3}[\s-]?\d{3}[\s-]?\d{4}|\+1\d{10})\b(?![\d.])"),
               re.compile(PHONE_LABEL + r"[^\n]{0,40}?(?<![\d.])(?P<num>[2-9]\d{2}[2-9]\d{6})(?![\d.])")],   # ten contiguous digits, label within 40 chars
-    "name_near_id": [re.compile(r"\b[A-Z][A-Z'\-]{2,30}(?:\s[A-Z][A-Z'\-]{1,30})?,\s?[A-Z][A-Z'\-]{1,30}\b[^\n]{0,80}?(?:\b\d{5,14}\b|\b\d{1,2}/\d{1,2}/\d{2,4}\b)")],
+    "name_near_id": [re.compile(r"\b[A-Z][A-Z'\-]{2,30}(?:\s[A-Z][A-Z'\-]{1,30})?,\s?[A-Z][A-Z'\-]{1,30}\b[^\n]{0,80}?(?:\b(?P<id>\d{5,14})\b|\b\d{1,2}/\d{1,2}/\d{2,4}\b)")],
     "email": [re.compile(r"(?i)(?<![a-z0-9._%+\-])[a-z0-9._%+\-]{1,64}@(?:gmail|googlemail|yahoo|ymail|rocketmail|hotmail|outlook|icloud|mac|me|aol|live|msn|comcast|att|sbcglobal|verizon|cox|charter|earthlink|frontier|proton|protonmail|pm|gmx)\.(?:com|net|me|co\.uk)\b")],
 }
 LINE_MARKER = re.compile(r"(?i)\b(?:synthetic|fixture|placeholder|sentinel)\b")   # explicit, documented opt-out words only
@@ -61,11 +63,29 @@ ALLOWED_SHAPES = ("Use the allowed test-data shapes: ROE/DOE/POE personas, 555-0
 # The practice's own published phone and fax (letterhead, website, fax cover, forms): business numbers, not patient data.
 # Exact numbers only; any other number, including a neighbour of these, is still checked. Never add a person's number here.
 PRACTICE_NUMBERS = frozenset({"8053928700", "8554204671"})
+# The regulator's published toll-free complaint number, quoted in the surgery consent text: a business number, exempt the
+# same way (exact match only). A separate set so each exemption says what it is.
+REGULATOR_NUMBERS = frozenset({"8009853059"})
 
 
 def impossible_nanp(digits):
     """True for a 10-digit US number that cannot be assigned: area code 555, or area code / exchange starting 0 or 1."""
     return digits[:3] == "555" or digits[0] in "01" or digits[3] in "01"
+
+
+def code_number(m):
+    """True when the first number after a LAST, FIRST shape has the code shape, not a record number's: any standalone
+    5-digit number (CPT, Quest test code) or a LOINC code (12345-6). Not a code: a 5-digit run inside a longer number
+    (12345.67, 0.12345, CCM-12345), ZIP+4, or five digits right after an upper-case 2-letter state abbreviation. Even
+    after a code, a 7+ digit number or a date in the next 80 characters still flags the line (name, CPT, date, account)."""
+    if not m.group("id") or len(m.group("id")) != 5:
+        return False
+    before, after = m.string[:m.start("id")], m.string[m.end("id"):]
+    if re.search(r"[-.]$", before) or re.search(r"\b[A-Z]{2},?\s+$", before):
+        return False
+    if re.search(r"(?<![\d.])\d{7,14}(?!\d)|\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b|\b\d{4}-\d{1,2}-\d{1,2}\b", after[:80]):
+        return False
+    return re.match(r"-\d(?!\d)", after) is not None or re.match(r"[-.]\d", after) is None
 
 
 def synthetic(name, m):
@@ -75,7 +95,9 @@ def synthetic(name, m):
     if name == "phone":
         digits = re.sub(r"\D", "", text)
         digits = digits[-10:] if len(digits) >= 10 else digits
-        return len(digits) == 10 and (impossible_nanp(digits) or digits in PRACTICE_NUMBERS)
+        return len(digits) == 10 and (impossible_nanp(digits) or digits in PRACTICE_NUMBERS or digits in REGULATOR_NUMBERS)
+    if name == "name_near_id":
+        return code_number(m)
     if name == "dob":
         gap, value = m.group(1), m.group(2)
         if PLACEHOLDER_DOB.match(value):

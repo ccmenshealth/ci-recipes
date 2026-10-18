@@ -264,7 +264,7 @@ class PracticeNumbers(unittest.TestCase):
         return ["call %s-%s-%s" % (a, e, l), "call %s.%s.%s" % (a, e, l), "call (%s) %s-%s" % (a, e, l),
                 "call +1%s" % n, "phone: %s" % n, "call %s %s %s" % (a, e, l)]
 
-    def test_practice_numbers_are_exempt_in_every_format(self):
+    def test_numbers_are_exempt_in_every_format(self):
         self.assertEqual(len(self.NUMBERS), 2)
         for n in self.NUMBERS:
             for line in self.formats(n):
@@ -275,6 +275,66 @@ class PracticeNumbers(unittest.TestCase):
             other = n[:-1] + str((int(n[-1]) + 1) % 10)
             for line in self.formats(other):
                 self.assertEqual(patterns(SRC, line), ["phone"])
+
+
+class RegulatorNumbers(PracticeNumbers):
+    """The regulator's published toll-free number (quoted in consent text) is a second named business set, exempt the
+    same way. Read from the canonical script, never typed here."""
+    NUMBERS = sorted(getattr(load_guard_from(os.path.join(HERE, "..", "identifier-guard.py")), "REGULATOR_NUMBERS", ()))
+
+    def test_numbers_are_exempt_in_every_format(self):
+        self.assertEqual(len(self.NUMBERS), 1)
+        for n in self.NUMBERS:
+            for line in self.formats(n):
+                self.assertEqual(patterns(SRC, line), [], line.split()[0])
+
+    def test_the_two_sets_are_separate(self):
+        canonical = load_guard_from(os.path.join(HERE, "..", "identifier-guard.py"))
+        self.assertFalse(set(self.NUMBERS) & set(canonical.PRACTICE_NUMBERS))
+
+
+# A capitalised LAST, FIRST shape assembled at run time (never a real name), and digit strings of the code shapes.
+NAME = d("K", 4) + ", " + d("J", 3)
+CPT = d("2", 5)                                              # a 5-digit procedure / test code
+LOINC = d("2", 5) + "-" + d("3", 1)                          # 12345-6 shape
+
+
+class NameNextToACode(unittest.TestCase):
+    """All-caps test names and constants next to a CPT / Quest test code or a LOINC code are not patients
+    (the five S3 false positives in ccmehr and three in vcmc-visit-notes, with the names swapped for synthetic ones)."""
+
+    def test_report_lines_are_not_flagged(self):
+        for line in ("| %s | %s | — | genetic | (code-only) | |" % (NAME, CPT),
+                     "| %s | 2878.76 | %s |" % (NAME, CPT),
+                     "  { testName: '%s', questTestCode: '%s', patientPriceCents: 287876 }," % (NAME, CPT),
+                     "    await expect(f.client.bindMedTracker(%s, { ...identity, subscriptionId: '%s' }))" % (NAME, CPT),
+                     "    expect((await f.client.getById(%s))?.medTrackerBinding?.subscriptionId).toBe('%s');" % (NAME, CPT),
+                     "    const s = aggregateReports(rows, %s); // no categoryMap — %s pinned inpatient" % (NAME, CPT),
+                     "    const s = aggregateReports(rows, %s, { '%s': 'or' });" % (NAME, CPT),
+                     "    for (const secret of [%s, 'Test Patient', '1900-01-01', '%s', 'N20.0', etag]) {" % (NAME, CPT)):
+            self.assertEqual(patterns(SRC, line), [], line)
+
+    def test_loinc_code_is_not_flagged(self):
+        self.assertEqual(patterns(SRC, "| %s | 8396 | %s | single | High |" % (NAME, LOINC)), [])
+
+    def test_a_record_number_or_date_next_to_a_name_is_still_flagged(self):
+        self.assertEqual(patterns(SRC, "%s acct %s" % (NAME, d("2", 8))), ["name_near_id"])
+        self.assertEqual(patterns(SRC, "%s %s" % (NAME, d("2", 6))), ["name_near_id"])
+        self.assertEqual(patterns(SRC, "%s seen 03/14/%d" % (NAME, ADULT)), ["name_near_id"])
+
+    def test_zip_shapes_next_to_a_name_are_still_flagged(self):
+        self.assertEqual(patterns(SRC, "%s, 12 Main St, Ventura, CA %s" % (NAME, CPT)), ["name_near_id"])
+        self.assertEqual(patterns(SRC, "%s %s-%s" % (NAME, CPT, d("3", 4))), ["name_near_id"])   # ZIP+4
+        self.assertEqual(patterns(SRC, "%s %s.%s" % (NAME, CPT, d("3", 2))), ["name_near_id"])   # not a code: a decimal
+        self.assertEqual(patterns(SRC, "%s 0.%s" % (NAME, CPT)), ["name_near_id"])               # nor a 5-digit run inside one
+
+    def test_a_record_number_or_date_after_a_code_is_still_flagged(self):
+        self.assertEqual(patterns(SRC, "%s %s seen 03/14/%d" % (NAME, CPT, ADULT)), ["name_near_id"])
+        self.assertEqual(patterns(SRC, "%s %s then %s" % (NAME, CPT, d("2", 9))), ["name_near_id"])
+        self.assertEqual(patterns(SRC, "%s %s acct %s" % (NAME, LOINC, d("2", 8))), ["name_near_id"])
+        self.assertEqual(patterns(SRC, "%s %s acct-%s" % (NAME, CPT, d("2", 8))), ["name_near_id"])
+        self.assertEqual(patterns(SRC, "%s %s dos %d-03-14" % (NAME, CPT, ADULT)), ["name_near_id"])
+        self.assertEqual(patterns(SRC, "%s %s dos 03-14-%d" % (NAME, CPT, ADULT)), ["name_near_id"])
 
 
 class FailureMessage(unittest.TestCase):
