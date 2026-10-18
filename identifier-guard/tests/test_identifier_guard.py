@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Tests for identifier-guard.py (stdlib unittest; python3 -m unittest discover -s identifier-guard/tests).
 
-One table row per finding of the 2026-10-17 hardening plan (F1-F4, G1-G5). Every literal in this file is one of the
+One test class per detection rule. Every literal in this file is one of the
 allowed test-data shapes (ROE/DOE/POE personas, 555-01xx and area-code-555 phones, the 4711 block, CCM-471NN, the
 999 sentinel, 1900-01-01 / 1970-01-01). Values the guard must FLAG are assembled at run time from repeated digits
 (`d("2", 3)` -> three 2s) so that no identifier-shaped literal sits in this file.
@@ -300,13 +300,12 @@ LOINC = d("2", 5) + "-" + d("3", 1)                          # 12345-6 shape
 
 
 class NameNextToACode(unittest.TestCase):
-    """All-caps test names and constants next to a CPT / Quest test code or a LOINC code are not patients
-    (the five S3 false positives in ccmehr and three in vcmc-visit-notes, with the names swapped for synthetic ones)."""
+    """All-caps test names and constants next to a CPT / test code or a LOINC code are not patient identifiers."""
 
     def test_report_lines_are_not_flagged(self):
         for line in ("| %s | %s | — | genetic | (code-only) | |" % (NAME, CPT),
-                     "| %s | 2878.76 | %s |" % (NAME, CPT),
-                     "  { testName: '%s', questTestCode: '%s', patientPriceCents: 287876 }," % (NAME, CPT),
+                     "| %s | 100.00 | %s |" % (NAME, CPT),
+                     "  { testName: '%s', questTestCode: '%s', patientPriceCents: 10000 }," % (NAME, CPT),
                      "    await expect(f.client.bindMedTracker(%s, { ...identity, subscriptionId: '%s' }))" % (NAME, CPT),
                      "    expect((await f.client.getById(%s))?.medTrackerBinding?.subscriptionId).toBe('%s');" % (NAME, CPT),
                      "    const s = aggregateReports(rows, %s); // no categoryMap — %s pinned inpatient" % (NAME, CPT),

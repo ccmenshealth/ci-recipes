@@ -6,7 +6,7 @@
 # With --check, also clone it fresh (depth 1) and run repo-standard/check.py on it (--public for a public repo).
 # Prints one line per repo and, with --check, the findings. Never writes to any repo.
 #
-# This repo is public and its CI token cannot read private repos, so the sweep runs from the owner's Mac (gh logged in
+# This repo's CI token cannot read other repos, so the sweep runs from the owner's Mac (gh logged in
 # as the owner); the owner's weekly scheduled task is the intended caller.
 #
 # usage: ./sweep.sh [--check] [--only repo1,repo2] [--owner OWNER] [--workdir DIR]
