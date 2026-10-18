@@ -1,0 +1,29 @@
+name: test
+# Tests the canonical identifier guard and scans this repo with it.
+# Cost: a few GitHub-hosted Linux runs a month, each billed as 1 minute ($0.006): under $0.10/month.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+      - name: Lint (byte-compile, warnings are errors)
+        run: python3 -W error -m py_compile identifier-guard/identifier-guard.py identifier-guard/tests/test_identifier_guard.py
+      - name: Unit tests
+        run: python3 -m unittest discover -s identifier-guard/tests -p 'test_*.py' -v
+      - name: Shell syntax
+        run: bash -n sync.sh && sh -n identifier-guard/pre-commit
+      - name: Scan this repo with the canonical guard (whole files)
+        run: git ls-files -z | xargs -0 python3 identifier-guard/identifier-guard.py --files
