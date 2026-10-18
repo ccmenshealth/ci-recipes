@@ -39,6 +39,8 @@
 # Env: ORG (default ccmhinc), OLD_OWNER (default ccmenshealth), SRC_BRANCH (default main), WORK (scratch dir), BUNDLES,
 #      EVIDENCE, GUARD_TAG (default v1.7), CANON_OWNER (owner whose ci-recipes@GUARD_TAG runs the certification; default OLD_OWNER).
 set -euo pipefail
+# xtrace would print secret values (az phases) into the evidence file.
+case "$-" in *x*) echo "FAIL: refusing to run under xtrace (bash -x / set -x)" >&2; exit 1 ;; esac
 
 ORG="${ORG:-ccmhinc}"
 OLD_OWNER="${OLD_OWNER:-ccmenshealth}"
@@ -360,10 +362,8 @@ phase_oidc() {
   say "oidc OK (old subjects stay until $OLD is archived)"
 }
 
-# Pipes stdin into an org repo secret; prints the name and the length only. Refuses to run under xtrace (bash -x would
-# print the value into the evidence file).
+# Pipes stdin into an org repo secret; prints the name and the length only.
 set_secret() {
-  case "$-" in *x*) die "refusing to set $1 under xtrace (set -x / bash -x)" ;; esac
   local name="$1" v; v="$(cat)"; [ -n "$v" ] || die "empty value for $name"
   printf '%s' "$v" | gh secret set "$name" -R "$NEW" || die "gh secret set $name failed"
   echo "set $name (${#v} chars)"
@@ -399,16 +399,19 @@ phase_swa_token() {
 # Names only, one per line, sorted: repo secrets/variables, environments, and each environment's secrets/variables
 # (as env/<name>/secret:<NAME>).
 binding_names() {
-  {
-    gh api --paginate "repos/$1/actions/secrets" --jq '.secrets[] | "secret:" + .name'
-    gh api --paginate "repos/$1/actions/variables" --jq '.variables[] | "variable:" + .name'
-    local e
-    for e in $(gh api --paginate "repos/$1/environments" --jq '.environments[]?.name'); do
-      echo "environment:$e"
-      gh api --paginate "repos/$1/environments/$e/secrets" --jq ".secrets[] | \"env/$e/secret:\" + .name"
-      gh api --paginate "repos/$1/environments/$e/variables" --jq ".variables[] | \"env/$e/variable:\" + .name"
-    done
-  } | sort
+  local out e envs
+  out="$(gh api --paginate "repos/$1/actions/secrets" --jq '.secrets[] | "secret:" + .name')" || return 1
+  out="$out
+$(gh api --paginate "repos/$1/actions/variables" --jq '.variables[] | "variable:" + .name')" || return 1
+  envs="$(gh api --paginate "repos/$1/environments" --jq '.environments[]?.name')" || return 1
+  for e in $envs; do
+    out="$out
+environment:$e
+$(gh api --paginate "repos/$1/environments/$e/secrets" --jq ".secrets[] | \"env/$e/secret:\" + .name")" || return 1
+    out="$out
+$(gh api --paginate "repos/$1/environments/$e/variables" --jq ".variables[] | \"env/$e/variable:\" + .name")" || return 1
+  done
+  printf '%s\n' "$out" | grep . | sort || true
 }
 
 phase_bindings() {
