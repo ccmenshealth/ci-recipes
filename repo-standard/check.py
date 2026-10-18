@@ -44,7 +44,7 @@ RUNS_ON = re.compile(r"^\s*runs-on:\s*(.*?)\s*(?:#.*)?$", re.M)
 HOSTED_LABEL = re.compile(r"""\[?\s*['"]?(ubuntu|windows|macos)-[\w.]+['"]?\s*\]?""")
 REPO_REF = re.compile(r"""^\s*(?:-\s*)?(?:uses|repository):\s*['"]?([\w.-]+/[\w.-]+)""", re.M)
 # image_paths entries that would allow a screenshot at the top level or under docs/ are refused.
-BROAD_PROBES = ["probe.png", "docs/probe.png", "docs/screenshots/probe.png", "some/dir/probe.png"]
+BROAD_PROBES = ["probe.png", "docs/probe.png", "docs/screenshots/probe.png", "some/dir/probe.png", "some/img/probe.png"]
 KEYS = {"version": int, "public": bool, "image_paths": list, "allow": list}
 
 
@@ -97,6 +97,8 @@ def load_config(root, files):
     if cfg.get("version", 1) != 1:
         raise Error(f"{CONFIG}: version must be 1")
     for pat in cfg.get("image_paths", []):
+        if pat.lower().startswith("docs/"):
+            raise Error(f"{CONFIG}: image_paths entry {pat!r}: images under docs/ are never allowed")
         if any(glob_regex(pat).match(probe) for probe in BROAD_PROBES):
             raise Error(f"{CONFIG}: image_paths entry {pat!r} is too broad; name the asset directory")
     tracked = set(files)
@@ -128,7 +130,8 @@ def check(root, canonical, public):
             elif p.parts[0] == "docs" and NARRATIVE_DIRS & {s.lower() for s in p.parts[1:-1]}:
                 v.append(("narrative-dir", f, "move it to the fixed doc set (docs/runbooks/, docs/decisions.md) "
                           "or into the memory system"))
-        if ext in IMAGE_EXT and not any(r.match(f) for r in image_ok):
+        # docs/ is prose; an image there is a capture of something, whatever directory it sits in.
+        if ext in IMAGE_EXT and (p.parts[0] == "docs" or not any(r.match(f) for r in image_ok)):
             v.append(("image-path", f, "images only in code-referenced asset paths; delete it, move it, or add "
                       f"its directory to \"image_paths\" in {CONFIG}"))
 

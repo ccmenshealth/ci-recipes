@@ -81,8 +81,11 @@ jobs:
       - name: Check the repo standard (STANDARD.md in ci-recipes)
         if: ${{ !cancelled() && inputs.standard }}
         env:
+          GH_TOKEN: ${{ github.token }}
           VISIBILITY: ${{ github.event.repository.visibility }}
         run: |
+          # The event payload names the visibility on pull_request; ask the API when it is missing (schedule).
+          if [ -z "$VISIBILITY" ]; then VISIBILITY="$(gh api "repos/$GITHUB_REPOSITORY" --jq .visibility 2>/dev/null || true)"; fi
           if [ "$VISIBILITY" = "public" ]; then
             exec python3 "$RUNNER_TEMP/ci-recipes/repo-standard/check.py" --root . --public
           fi

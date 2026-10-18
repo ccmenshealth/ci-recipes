@@ -35,7 +35,8 @@ identifiers by the guard, so the only safe image is one nobody had to look at a 
 Default allowed paths (case-insensitive): `public/**`, `**/public/**`, `assets/**`, `**/assets/**`,
 `fixtures/golden/**`, `**/*.ico`, `**/*.icns`, `**/*.appiconset/**`, `**/*.iconset/**`, `**/*.xcassets/**`,
 `**/icons/**`, `**/icon/**`, `**/app/icon.*`, `**/app/apple-icon.*`. Any other asset directory (a fixture folder, a
-logo folder) is named in `image_paths` in `.repo-standard.json` after someone has looked at what is in it.
+logo folder) is named in `image_paths` in `.repo-standard.json` after someone has looked at what is in it. No image
+under `docs/` is ever allowed, whatever the directory: docs are prose.
 
 ## Test data
 
@@ -100,7 +101,7 @@ per violation: rule, path, fix. Paths only, never file content. Exit 0 clean, 1 
 |---|---|
 | `narrative-name` | a document file (`.md`, `.txt`, `.rst`, `.html`, `.pdf`, `.docx`, …, or no extension) is named like narrative: contains hand-off/handoff, ledger, current-state, resume-prompt or startup-prompt; a history of the work (`session-history`, `change-history`, `HISTORY.md`); or the whole name is progress, status, todo(s), bookmark(s) |
 | `narrative-dir` | any file under `docs/` sits in a directory named progress, todo(s), audit(s), archive(d), history/histories, handoff(s), ledger(s), sessions or status |
-| `image-path` | an image (`png jpg jpeg gif webp bmp tif tiff heic heif avif svg ico icns`) is outside the allowed paths |
+| `image-path` | an image (`png jpg jpeg gif webp bmp tif tiff heic heif avif svg ico icns`) is under `docs/` or outside the allowed paths |
 | `required-file` | `README.md` or `CLAUDE.md` is missing |
 | `pr-template` | `.github/PULL_REQUEST_TEMPLATE.md` is missing or has no `CI cost` line |
 | `guard` | `scripts/identifier-guard.py` is missing or differs from the canonical copy |
@@ -108,7 +109,8 @@ per violation: rule, path, fix. Paths only, never file content. Exit 0 clean, 1 
 | `public-repo` | (public repos) a workflow or local action names a secret other than `GITHUB_TOKEN` (including `secrets: inherit`), runs on anything but a literal GitHub-hosted label, or uses or checks out a `ccmenshealth/` repo other than ci-recipes |
 
 Names only count for document files: a source file called `history.ts` or `handoff.py` is code, not narrative.
-"History" alone is a feature or clinical word (payment history, medical history) and passes.
+"History" alone is a feature or clinical word (payment history, medical history) and passes. A document about a
+feature that happens to be called a ledger or a hand-off goes in `allow`.
 
 Not machine-checked (review rules): which documents sit under `docs/` beyond the narrative names; what an image in an
 allowed path shows; wording of records (rule, not event); a repo that has no caller workflow at all (see New repos).

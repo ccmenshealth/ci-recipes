@@ -41,7 +41,7 @@ fi
 work="$(mktemp -d "${TMPDIR:-/tmp}/new-repo.XXXXXX")"
 tree="$work/$NAME"
 cp -R "$RECIPES/template" "$tree"
-grep -rlF '__REPO__' "$tree" | while IFS= read -r f; do
+{ grep -rlF '__REPO__' "$tree" || true; } | while IFS= read -r f; do
   python3 - "$f" "$NAME" <<'EOF'
 import sys
 path, name = sys.argv[1], sys.argv[2]

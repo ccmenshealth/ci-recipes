@@ -24,10 +24,14 @@ apply_guard() {
 }
 
 # apply_standard <dir> <public: 0|1>: PR template (or the CI-cost section appended to an existing one that lacks the
-# line), .repo-standard.json (kept if present; "public" set from the argument), a CLAUDE.md when missing (one line that
-# imports AGENTS.md if the repo has one, else a pointer to the standard), then the guard with the standard caller.
+# line), .repo-standard.json (kept if present; "public" set when the argument is 1, never cleared), a CLAUDE.md when
+# missing (one line that imports AGENTS.md if the repo has one, else a pointer to the standard), then the guard with the
+# standard caller. Returns 1 without touching the guard files when an existing .repo-standard.json is not valid JSON.
 apply_standard() {
   local dir="$1" public="$2" pr="$1/.github/PULL_REQUEST_TEMPLATE.md"
+  if [ -f "$dir/.repo-standard.json" ] && ! python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$dir/.repo-standard.json" 2>/dev/null; then
+    echo "$dir/.repo-standard.json is not valid JSON; fix it first" >&2; return 1
+  fi
   mkdir -p "$dir/.github"
   if [ ! -f "$dir/CLAUDE.md" ]; then
     if [ -f "$dir/AGENTS.md" ]; then echo "@AGENTS.md" > "$dir/CLAUDE.md"
@@ -43,7 +47,7 @@ apply_standard() {
 import json, sys
 path, public = sys.argv[1], sys.argv[2] == "1"
 cfg = json.load(open(path))
-cfg["public"] = public
+cfg["public"] = public or cfg.get("public") is True
 open(path, "w").write(json.dumps(cfg, indent=2) + "\n")
 EOF
   apply_guard "$dir"

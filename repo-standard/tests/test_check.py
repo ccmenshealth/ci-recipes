@@ -205,6 +205,19 @@ class Images(Base):
                 self.repo.config({"image_paths": [pat]})
                 self.assertError()
 
+    def test_images_under_docs_are_never_allowed(self):
+        for rel in ["docs/assets/screen.png", "docs/public/s.png", "docs/icons/s.png", "docs/x/app/icon.png"]:
+            with self.subTest(rel=rel):
+                repo = Repo(); self.addCleanup(repo.close); self.repo = repo
+                repo.write(rel)
+                self.assertViolation("image-path", rel)
+
+    def test_image_paths_entry_under_docs_is_an_error(self):
+        for pat in ["docs/assets/**", "**/img/**"]:
+            with self.subTest(pat=pat):
+                self.repo.config({"image_paths": [pat]})
+                self.assertError()
+
     def test_fixtures_outside_golden_need_a_config_entry(self):
         self.repo.write("tests/fixtures/run-a/frame.png")
         self.assertViolation("image-path", "tests/fixtures/run-a/frame.png")
@@ -399,6 +412,31 @@ class Template(unittest.TestCase):
         self.assertEqual(cfg["image_paths"], json.loads(r.stdout))
 
 
+class ReusableWorkflow(unittest.TestCase):
+    """The standard step is opt-in and last, so callers that do not pass `standard` run what they ran before."""
+
+    WF = (RECIPES / ".github/workflows/identifier-guard.yml").read_text()
+
+    def test_standard_input_defaults_to_false(self):
+        block = self.WF.split("      standard:\n", 1)[1].split("permissions:", 1)[0]
+        self.assertIn("type: boolean", block)
+        self.assertIn("default: false", block)
+
+    def test_standard_step_is_last_and_gated(self):
+        steps = self.WF.split("      - name: ")
+        self.assertTrue(steps[-1].startswith("Check the repo standard"), steps[-1][:60])
+        self.assertIn("if: ${{ !cancelled() && inputs.standard }}", steps[-1])
+        self.assertEqual(sum("inputs.standard" in st for st in steps), 1)
+
+    def test_scan_step_is_unchanged(self):
+        scan = [st for st in self.WF.split("      - name: ") if st.startswith("Scan added lines")][0]
+        for line in ["rm -rf .ci-recipes",
+                     'exec python3 scripts/identifier-guard.py --three-dot --base "$PR_BASE" --head "$PR_HEAD"',
+                     'exec python3 scripts/identifier-guard.py --base "$BASE" --head HEAD']:
+            self.assertIn(line, scan)
+        self.assertNotIn("if:", scan.split("run:", 1)[0])
+
+
 class ShellLib(unittest.TestCase):
     """lib/apply.sh, the placement sync.sh and new-repo.sh share."""
 
@@ -449,6 +487,19 @@ class ShellLib(unittest.TestCase):
         pr = (self.root / ".github/PULL_REQUEST_TEMPLATE.md").read_text()
         self.assertTrue(pr.startswith("## Summary\n"))
         self.assertEqual(pr.count("CI cost:"), 1, pr)
+
+    def test_public_flag_is_never_downgraded(self):
+        self.bash(self.root, 'apply_standard "$2" 1')
+        code, out = self.bash(self.root, 'apply_standard "$2" 0')
+        self.assertEqual(code, 0, out)
+        self.assertTrue(json.loads((self.root / ".repo-standard.json").read_text())["public"])
+
+    def test_bad_existing_config_fails_the_call_not_the_shell(self):
+        (self.root / ".repo-standard.json").write_text("{bad")
+        code, out = self.bash(self.root, 'if apply_standard "$2" 0; then echo applied; else echo refused; fi')
+        self.assertEqual(code, 0, out)
+        self.assertIn("refused", out)
+        self.assertFalse((self.root / "scripts/identifier-guard.py").exists())
 
     def test_in_sync_is_false_for_a_bare_repo(self):
         code, _ = self.bash(self.root, 'in_sync "$2" 0')

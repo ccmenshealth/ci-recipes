@@ -85,7 +85,7 @@ for repo in "${REPOS[@]}"; do
   git -C "$clone" checkout -q -b "$BRANCH"
   if [ "$STANDARD" = 1 ]; then
     pub=0; [ "$visibility" = public ] && pub=1
-    apply_standard "$clone" "$pub"
+    apply_standard "$clone" "$pub" || { echo "    skipped"; continue; }
     git -C "$clone" add CLAUDE.md .github/PULL_REQUEST_TEMPLATE.md .repo-standard.json
   else
     apply_guard "$clone"
@@ -140,15 +140,18 @@ for repo in "${REPOS[@]}"; do
   if [ "$STANDARD" = 1 ]; then echo "    repo-standard: exit $std_rc"; sed 's/^/      /' "$std_out"; fi
   if [ "$DRY" = 1 ]; then echo "    dry run: body at $body"; git -C "$clone" status --short | sed 's/^/    /'; continue; fi
   if git -C "$clone" diff --cached --quiet; then echo "    nothing to commit; skipped"; continue; fi
-  title="Use the shared identifier guard from ci-recipes@v1"
-  [ "$STANDARD" = 1 ] && title="Adopt the repo standard from ci-recipes@v1"
+  std_note=""
+  if [ "$STANDARD" = 1 ]; then
+    std_note=$'\nAdds the PR template with the CI-cost line and .repo-standard.json; the caller passes standard: true,\nso repo-standard/check.py runs after the scan (repo-standard exit '"$std_rc"$' on this branch).'
+  fi
+  title="Use the shared identifier guard from ccmenshealth/ci-recipes@v1"
+  if [ "$STANDARD" = 1 ]; then title="Adopt the repo standard from ccmenshealth/ci-recipes@v1"; fi
   git -C "$clone" -c commit.gpgsign=false commit -q -F - <<EOF
 ${title}
 
 scripts/identifier-guard.py and .githooks/pre-commit are byte-identical copies of ci-recipes ${RECIPES_REV};
 the workflow is a thin caller of the reusable workflow, which checks the copy against the canonical one before
-running it. Full-scan delta on ${default}: ${n_before} -> ${n_after} hits (${n_gone} gone, ${n_new} new).
-$([ "$STANDARD" = 1 ] && printf '\nAdds the PR template with the CI-cost line and .repo-standard.json; the caller passes\nstandard: true, so repo-standard/check.py runs after the scan (repo-standard exit %s here).\n' "$std_rc")
+running it. Full-scan delta on ${default}: ${n_before} -> ${n_after} hits (${n_gone} gone, ${n_new} new).${std_note}
 
 ${CO_AUTHOR}
 EOF
