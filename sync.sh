@@ -8,14 +8,18 @@
 # A repo whose three files already match is skipped. A repo with an open ci/identifier-guard-v1 PR is skipped unless --force.
 # A repo that has .repo-standard.json (it opted into the repo standard) gets the standard caller (template/.github/
 # workflows/identifier-guard.yml, `standard: true`) instead of the plain one, so a guard sync never reverts the opt-in.
+# The caller pins an exact ci-recipes release tag (there is no moving tag): the latest v1.N on origin, or --tag. The tag
+# must carry this clone's guard script and hook; a repo pinned to an older tag is out of sync and gets a PR. Until that
+# PR merges the repo keeps running its old pin, which still passes its own hash check.
 #
-# usage: ./sync.sh [--only repo1,repo2] [--standard] [--dry-run] [--force] [--workdir DIR]
+# usage: ./sync.sh [--only repo1,repo2] [--standard] [--dry-run] [--force] [--workdir DIR] [--tag v1.N]
 #   --only      comma-separated repo names (the rollout waves); default: every repo in REPOS below
 #   --standard  also adopt the repo standard (STANDARD.md) on branch ci/repo-standard-v1: add the PR template (or append
 #               the CI-cost section to an existing one), .repo-standard.json ("public" from the repo's visibility), a
 #               one-line CLAUDE.md if missing, and the standard caller; run repo-standard/check.py on the result and put its findings in the PR body
 #   --dry-run   clone, copy, scan, check and print the PR body; no commit, push or PR
 #   --force     push and open a PR even if one is already open for the branch (the branch is replaced)
+#   --tag       the release tag to pin (default: the latest v1.N on origin); a dry run only warns if it lacks this guard
 # Requires: git, gh (logged in as the ccmenshealth account, with `gh auth setup-git` so private clones work), python3.
 # The push uses --force-with-lease with the lease taken at clone time: it replaces an existing remote ci/identifier-guard-v1
 # (for example a closed PR's branch) and only protects against a push that lands between the clone and the push.
@@ -34,21 +38,29 @@ RECIPES="$HERE"
 . "$HERE/lib/apply.sh"
 SRC_SCRIPT="$GUARD_SRC"
 WORKDIR="${TMPDIR:-/tmp}/ci-recipes-sync"
-DRY=0; FORCE=0; ONLY=""; STANDARD=0
+DRY=0; FORCE=0; ONLY=""; STANDARD=0; PIN_TAG=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --only) ONLY="$2"; shift 2 ;;
     --dry-run) DRY=1; shift ;;
     --standard) STANDARD=1; BRANCH=ci/repo-standard-v1; shift ;;
     --force) FORCE=1; shift ;;
+    --tag) [ -n "${2:-}" ] || { echo "--tag needs a value" >&2; exit 2; }; PIN_TAG="$2"; shift 2 ;;
     --workdir) [ -n "$2" ] || { echo "--workdir needs a path" >&2; exit 2; }; WORKDIR="$2"; shift 2 ;;
-    -h|--help) sed -n '2,21p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 for f in "$GUARD_SRC" "$HOOK_SRC" "$PLAIN_CALLER" "$STANDARD_CALLER" "$TEMPLATE_PR" "$TEMPLATE_CONFIG" "$CHECK"; do
   [ -f "$f" ] || { echo "run from a ci-recipes clone ($f missing)" >&2; exit 2; }
 done
+PIN_TAG="${PIN_TAG:-$(latest_release_tag origin)}"
+release_tag_shape "$PIN_TAG" || exit 2
+if ! check_pin_tag "$PIN_TAG"; then
+  if [ "$DRY" = 1 ]; then echo "dry run: continuing with @$PIN_TAG anyway" >&2; else exit 2; fi
+fi
+export PIN_TAG
+echo "pinning callers to ci-recipes@$PIN_TAG"
 if [ -n "$ONLY" ]; then IFS=',' read -r -a REPOS <<< "${ONLY//$OWNER\//}"; fi
 [ -n "$WORKDIR" ] || { echo "empty work directory" >&2; exit 2; }
 mkdir -p "$WORKDIR"
@@ -110,7 +122,7 @@ for repo in "${REPOS[@]}"; do
       echo "## Identifier guard"
       echo
     fi
-    echo "Thin caller for the shared identifier guard: \`scripts/identifier-guard.py\` and \`.githooks/pre-commit\` become byte-identical copies of \`ccmenshealth/ci-recipes\` @ ${RECIPES_REV} (script blob \`${CANON_SHA:0:8}\`); \`.github/workflows/identifier-guard.yml\` now calls the reusable workflow at \`@v1\`, which fails if this repo's copy ever differs from the canonical one and then runs this repo's own copy on added lines, exactly as before. The hook file is unchanged and still scans added lines only, offline; the detection rules are the hardened ones (F1-F4, G1-G5)."
+    echo "Thin caller for the shared identifier guard: \`scripts/identifier-guard.py\` and \`.githooks/pre-commit\` become byte-identical copies of \`ccmenshealth/ci-recipes\` @ ${RECIPES_REV} (script blob \`${CANON_SHA:0:8}\`); \`.github/workflows/identifier-guard.yml\` now calls the reusable workflow at the exact release tag \`@${PIN_TAG}\`, which fails if this repo's copy ever differs from the canonical one and then runs this repo's own copy on added lines, exactly as before. The hook file is unchanged and still scans added lines only, offline; the detection rules are the hardened ones (F1-F4, G1-G5)."
     echo
     echo "Plan: \`vcmc-notes/docs/plans/F_2026-10-17_identifier-guard-hardening.plan.md\` (F1-F4, G1-G5). Hits are reported as file:line + pattern only."
     echo
@@ -146,8 +158,8 @@ for repo in "${REPOS[@]}"; do
   if [ "$STANDARD" = 1 ]; then
     std_note=$'\nAdds the PR template with the CI-cost line and .repo-standard.json; the caller passes standard: true,\nso repo-standard/check.py runs after the scan (repo-standard exit '"$std_rc"$' on this branch).'
   fi
-  title="Use the shared identifier guard from ccmenshealth/ci-recipes@v1"
-  if [ "$STANDARD" = 1 ]; then title="Adopt the repo standard from ccmenshealth/ci-recipes@v1"; fi
+  title="Use the shared identifier guard from ccmenshealth/ci-recipes@${PIN_TAG}"
+  if [ "$STANDARD" = 1 ]; then title="Adopt the repo standard from ccmenshealth/ci-recipes@${PIN_TAG}"; fi
   git -C "$clone" -c commit.gpgsign=false commit -q -F - <<EOF
 ${title}
 

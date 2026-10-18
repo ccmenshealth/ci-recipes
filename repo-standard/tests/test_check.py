@@ -586,7 +586,8 @@ class Template(unittest.TestCase):
     def test_template_caller_is_the_plain_caller_plus_standard(self):
         plain = PLAIN_CALLER.read_text()
         std = (TEMPLATE / ".github/workflows/identifier-guard.yml").read_text()
-        uses = "    uses: ccmenshealth/ci-recipes/.github/workflows/identifier-guard.yml@v1\n"
+        uses = ("    uses: ccmenshealth/ci-recipes/.github/workflows/identifier-guard.yml@v1.5"
+                "   # exact release tag; sync.sh writes the current one\n")
         self.assertIn(uses, plain)
         with_ = "    with:\n      standard: true   # also run the repo-standard check (STANDARD.md in ci-recipes)\n"
         self.assertEqual(std, plain.replace(uses, uses + with_))
@@ -627,7 +628,7 @@ class ShellLib(unittest.TestCase):
     """lib/apply.sh, the placement sync.sh and new-repo.sh share."""
 
     def bash(self, root, script):
-        r = subprocess.run(["bash", "-c", f'set -euo pipefail; RECIPES="$1"; . "$RECIPES/lib/apply.sh"; {script}',
+        r = subprocess.run(["bash", "-c", f'set -euo pipefail; RECIPES="$1"; PIN_TAG=v1.5; . "$RECIPES/lib/apply.sh"; {script}',
                             "bash", str(RECIPES), str(root)], capture_output=True, text=True)
         return r.returncode, r.stdout + r.stderr
 

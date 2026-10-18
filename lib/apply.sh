@@ -9,18 +9,61 @@ TEMPLATE_PR="$RECIPES/template/.github/PULL_REQUEST_TEMPLATE.md"
 TEMPLATE_CONFIG="$RECIPES/template/.repo-standard.json"
 CHECK="$RECIPES/repo-standard/check.py"
 
+# Callers pin an exact release tag (v1.N); there is no moving tag. PIN_TAG is the tag written into every caller placed
+# here; sync.sh and new-repo.sh set it (latest_release_tag, or --tag) and check it with check_pin_tag first.
+
+# latest_release_tag <remote>: the highest v1.N tag on that remote (v1, v2-rc and other shapes are ignored).
+latest_release_tag() {
+  git -C "$RECIPES" ls-remote --tags --refs "$1" 'v1.*' | sed 's#.*refs/tags/##' | { grep -E '^v1\.[0-9]+$' || true; } \
+    | sort -t. -k2,2n | tail -n 1
+}
+
+# release_tag_shape <tag>: true for an exact v1.N tag; anything else (v1, v1.2.3, a branch, sed or shell syntax) is refused.
+release_tag_shape() {
+  [[ "$1" =~ ^v1\.[0-9]+$ ]] || { echo "pin tag '$1' is not an exact v1.N release tag" >&2; return 1; }
+}
+
+# check_pin_tag <tag>: the tag is a v1.N tag on origin whose guard script, hook and standard check are this clone's
+# files, so a caller pinned to it passes the reusable workflow's hash check and runs the check.py this clone ran.
+# Prints the reason and returns 1 otherwise.
+check_pin_tag() {
+  local tag="$1" f
+  release_tag_shape "$tag" || return 1
+  if ! git -C "$RECIPES" fetch -q --no-tags origin "refs/tags/$tag" 2>/dev/null; then
+    echo "tag $tag is not on origin; cut and push it first (git tag $tag <commit> && git push origin $tag)" >&2; return 1
+  fi
+  for f in identifier-guard/identifier-guard.py identifier-guard/pre-commit repo-standard/check.py; do
+    if [ "$(git -C "$RECIPES" rev-parse "FETCH_HEAD:$f" 2>/dev/null)" != "$(git -C "$RECIPES" hash-object "$RECIPES/$f")" ]; then
+      echo "tag $tag has a different $f than this clone; check out the tag, or merge and cut a new tag" >&2; return 1
+    fi
+  done
+}
+
+# place_caller <source caller> <dest>: the caller with its ci-recipes reference pinned to PIN_TAG (checked for shape first,
+# so nothing else ever reaches sed). Writes nothing and returns 1 if the source has no pinnable uses: line.
+place_caller() {
+  local out
+  [ -n "${PIN_TAG:-}" ] || { echo "PIN_TAG is not set" >&2; return 1; }
+  release_tag_shape "$PIN_TAG" || return 1
+  out="$(sed -E "s#^( *uses: ccmenshealth/ci-recipes/\.github/workflows/identifier-guard\.yml)@[^[:space:]]*#\1@${PIN_TAG}#" "$1")" || return 1
+  grep -qE "^ *uses: ccmenshealth/ci-recipes/\.github/workflows/identifier-guard\.yml@${PIN_TAG}([[:space:]]|$)" <<< "$out" \
+    || { echo "$1 has no ci-recipes identifier-guard uses: line to pin" >&2; return 1; }
+  printf '%s\n' "$out" > "$2"
+}
+
 # caller_for <dir>: the caller workflow a repo should carry. A repo that has opted into the standard (it has
 # .repo-standard.json) keeps the standard caller, so a plain guard sync never reverts the opt-in.
 caller_for() {
   if [ -f "$1/.repo-standard.json" ]; then echo "$STANDARD_CALLER"; else echo "$PLAIN_CALLER"; fi
 }
 
-# apply_guard <dir>: the guard script, the hook and the right caller workflow.
+# apply_guard <dir>: the guard script, the hook and the right caller workflow, pinned to PIN_TAG.
 apply_guard() {
+  [ -n "${PIN_TAG:-}" ] || { echo "PIN_TAG is not set" >&2; return 1; }
   mkdir -p "$1/scripts" "$1/.githooks" "$1/.github/workflows"
   cp "$GUARD_SRC" "$1/scripts/identifier-guard.py"
   cp "$HOOK_SRC" "$1/.githooks/pre-commit"; chmod +x "$1/.githooks/pre-commit"
-  cp "$(caller_for "$1")" "$1/.github/workflows/identifier-guard.yml"
+  place_caller "$(caller_for "$1")" "$1/.github/workflows/identifier-guard.yml"
 }
 
 # apply_standard <dir> <public: 0|1>: PR template (or the CI-cost section appended to an existing one that lacks the
@@ -53,9 +96,10 @@ EOF
   apply_guard "$dir"
 }
 
-# in_sync <dir> <standard: 0|1>: true when every file apply_guard (and apply_standard when asked) would write is current.
+# in_sync <dir> <standard: 0|1>: true when every file apply_guard (and apply_standard when asked) would write is current,
+# including the caller's pin (a repo on an older tag is not in sync).
 in_sync() {
-  local dir="$1" want_caller
+  local dir="$1" want_caller pinned rc
   if [ "$2" = 1 ]; then
     [ -f "$dir/.repo-standard.json" ] && [ -f "$dir/CLAUDE.md" ] && [ -f "$dir/.github/PULL_REQUEST_TEMPLATE.md" ] \
       && grep -qiE '^[^[:alnum:]]*CI cost([^[:alnum:]]|$)' "$dir/.github/PULL_REQUEST_TEMPLATE.md" || return 1
@@ -63,6 +107,11 @@ in_sync() {
   else
     want_caller="$(caller_for "$dir")"
   fi
+  pinned="$(mktemp)"
+  place_caller "$want_caller" "$pinned" || { rm -f "$pinned"; return 1; }
+  rc=0
   cmp -s "$GUARD_SRC" "$dir/scripts/identifier-guard.py" && cmp -s "$HOOK_SRC" "$dir/.githooks/pre-commit" \
-    && cmp -s "$want_caller" "$dir/.github/workflows/identifier-guard.yml"
+    && cmp -s "$pinned" "$dir/.github/workflows/identifier-guard.yml" || rc=1
+  rm -f "$pinned"
+  return "$rc"
 }

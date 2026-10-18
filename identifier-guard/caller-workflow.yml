@@ -20,4 +20,4 @@ concurrency:
 jobs:
   guard:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    uses: ccmenshealth/ci-recipes/.github/workflows/identifier-guard.yml@v1
+    uses: ccmenshealth/ci-recipes/.github/workflows/identifier-guard.yml@v1.5   # exact release tag; sync.sh writes the current one
