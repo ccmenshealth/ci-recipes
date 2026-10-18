@@ -145,6 +145,7 @@ class NarrativeNames(Base):
                     "docs/plans/widget-payments-history.md", "forms/intake page 2 medical history.docx",
                     "forms/Adult Health History form.pdf"]:
             self.repo.write(rel)
+        self.repo.config({"asset_paths": ["forms/**"]})
         self.assertClean()
 
 
@@ -161,6 +162,26 @@ class NarrativeDirs(Base):
                 self.assertEqual(code, 1, out)
                 self.assertIn(f"narrative-dir {rel}", " ".join(out.split()))
 
+    def test_root_archive_handoff_history_dirs_are_flagged(self):
+        for rel in ["archive/old-flow.json", "archived/x.md", "handoff/h.txt", "handoffs/a.md", "history/h.md",
+                    "histories/x.json", "Archive/x.bin"]:
+            with self.subTest(rel=rel):
+                repo = Repo(); self.addCleanup(repo.close); self.repo = repo
+                repo.write(rel)
+                code, out = repo.run()
+                self.assertEqual(code, 1, out)
+                self.assertIn(f"narrative-dir {rel}", " ".join(out.split()))
+
+    def test_root_dir_allow_entry(self):
+        self.repo.write("archive/a.json").write("archive/b.json")
+        self.repo.config({"allow": ["archive/a.json"]})
+        out = self.assertViolation("narrative-dir", "archive/b.json")
+        self.assertNotIn("archive/a.json", out)
+
+    def test_root_status_and_todo_dirs_pass(self):
+        self.repo.write("status/page.tsx").write("todo/list.ts").write("progress/bar.ts")
+        self.assertClean()
+
     def test_same_names_outside_docs_pass(self):
         self.repo.write("src/app/audit/page.tsx").write("src/archive/index.ts").write("tests/progress/a.test.ts")
         self.assertClean()
@@ -174,14 +195,14 @@ class NarrativeDirs(Base):
 class Images(Base):
     def test_screenshot_outside_asset_paths_is_flagged(self):
         self.repo.write("docs/screenshot.png")
-        self.assertViolation("image-path", "docs/screenshot.png")
+        self.assertViolation("binary-path", "docs/screenshot.png")
 
     def test_every_image_extension_is_checked(self):
         for ext in ["png", "JPG", "jpeg", "gif", "webp", "bmp", "tif", "tiff", "heic", "heif", "avif", "svg"]:
             self.repo.write(f"shots/a.{ext}")
         code, out = self.repo.run()
         self.assertEqual(code, 1, out)
-        self.assertEqual(sum(1 for ln in out.splitlines() if ln.startswith("image-path")), 12, out)
+        self.assertEqual(sum(1 for ln in out.splitlines() if ln.startswith("binary-path")), 12, out)
 
     def test_default_allowed_paths(self):
         for rel in ["public/logo.svg", "webapp/public/og.png", "assets/a.png", "src/ui/assets/b.png",
@@ -195,37 +216,63 @@ class Images(Base):
 
     def test_config_image_paths_replace_the_default(self):
         self.repo.write("public/logo.svg").write("media/x.png")
-        self.repo.config({"image_paths": ["media/**"]})
-        out = self.assertViolation("image-path", "public/logo.svg")
+        self.repo.config({"asset_paths": ["media/**"]})
+        out = self.assertViolation("binary-path", "public/logo.svg")
         self.assertNotIn("media/x.png", out)
 
     def test_over_broad_image_paths_are_an_error(self):
         for pat in ["**", "**/*", "*", "docs/**", "**/*.png", "**/docs/**"]:
             with self.subTest(pat=pat):
-                self.repo.config({"image_paths": [pat]})
+                self.repo.config({"asset_paths": [pat]})
                 self.assertError()
+
+    def test_binary_documents_follow_the_asset_rule(self):
+        for ext in ["pdf", "docx", "doc", "xlsx", "xls", "pptx", "ppt", "odt", "ods", "odp"]:
+            with self.subTest(ext=ext):
+                repo = Repo(); self.addCleanup(repo.close); self.repo = repo
+                repo.write(f"forms/blank.{ext}")
+                self.assertViolation("binary-path", f"forms/blank.{ext}")
+
+    def test_binary_documents_pass_in_asset_paths(self):
+        self.repo.write("fixtures/golden/page.synthetic.pdf").write("fixtures/golden/a.synthetic.xlsx")
+        self.repo.write("fixtures/synthetic/b.synthetic.xlsx").write("sbsc/form.pdf").write("public/terms.pdf")
+        self.repo.config({"asset_paths": ["public/**", "fixtures/golden/**", "fixtures/synthetic/**", "sbsc/**"]})
+        self.assertClean()
+
+    def test_default_allows_synthetic_fixture_documents(self):
+        self.repo.write("fixtures/synthetic/b.synthetic.xlsx")
+        self.assertClean()
+
+    def test_binary_document_under_docs_is_flagged(self):
+        self.repo.write("docs/assets/export.pdf")
+        self.assertViolation("binary-path", "docs/assets/export.pdf")
+
+    def test_old_image_paths_key_is_an_error_naming_the_new_one(self):
+        self.repo.config('{"image_paths": ["public/**"]}')
+        out = self.assertError()
+        self.assertIn("'image_paths' is now 'asset_paths'", out)
 
     def test_images_under_docs_are_never_allowed(self):
         for rel in ["docs/assets/screen.png", "docs/public/s.png", "docs/icons/s.png", "docs/x/app/icon.png"]:
             with self.subTest(rel=rel):
                 repo = Repo(); self.addCleanup(repo.close); self.repo = repo
                 repo.write(rel)
-                self.assertViolation("image-path", rel)
+                self.assertViolation("binary-path", rel)
 
     def test_image_paths_entry_under_docs_is_an_error(self):
         for pat in ["docs/assets/**", "**/img/**"]:
             with self.subTest(pat=pat):
-                self.repo.config({"image_paths": [pat]})
+                self.repo.config({"asset_paths": [pat]})
                 self.assertError()
 
     def test_fixtures_outside_golden_need_a_config_entry(self):
         self.repo.write("tests/fixtures/run-a/frame.png")
-        self.assertViolation("image-path", "tests/fixtures/run-a/frame.png")
+        self.assertViolation("binary-path", "tests/fixtures/run-a/frame.png")
 
     def test_glob_star_stays_in_one_segment(self):
         self.repo.write("media/deep/x.png")
-        self.repo.config({"image_paths": ["media/*"]})
-        self.assertViolation("image-path", "media/deep/x.png")
+        self.repo.config({"asset_paths": ["media/*"]})
+        self.assertViolation("binary-path", "media/deep/x.png")
 
 
 class RequiredFiles(Base):
@@ -324,6 +371,16 @@ class PublicRepo(Base):
             with self.subTest(value=value):
                 self.flagged(f"jobs:\n  a:\n    runs-on: {value}\n")
 
+    def test_public_repo_macos_and_windows_are_flagged(self):
+        for value in ["macos-latest", "windows-latest", "[macos-14]"]:
+            with self.subTest(value=value):
+                self.flagged(f"jobs:\n  a:\n    runs-on: {value}\n")
+
+    def test_public_repo_github_token_any_case(self):
+        self.repo.write(self.WF, "jobs:\n  a:\n    runs-on: ubuntu-latest\n    env:\n      T: ${{ secrets.github_token }}\n")
+        self.repo.config({"public": True})
+        self.assertClean()
+
     def test_public_repo_github_hosted_labels_pass(self):
         self.repo.write(self.WF, "jobs:\n  a:\n    runs-on: ubuntu-latest\n  b:\n    runs-on: 'ubuntu-24.04'\n"
                         "  c:\n    runs-on: [ubuntu-22.04]\n    env:\n      T: ${{ secrets.GITHUB_TOKEN }}\n")
@@ -347,10 +404,131 @@ class PublicRepo(Base):
         self.assertClean()
 
 
+def sh(*parts):
+    """Secret-shaped values are assembled at run time so this file holds none."""
+    return "".join(parts)
+
+
+class SecretShapes(Base):
+    SHAPES = {
+        "logic-app-sig": sh("https://prod.example.com/workflows/x/triggers/manual/paths/invoke?api-version=2016-10-01&sp=%2F&sv=1.0&", "sig=", "Ab3dEf6hIj9kLm2nOp5qRs8tUv1wXy4z"),
+        "sas": sh("?sv=", "2022-11-02&ss=b&srt=co&sp=rl&", "sig=", "abcDEF123%2Bxyz456789ABCdef%3D"),
+        "account-key": sh("DefaultEndpointsProtocol=https;AccountName=demo;", "AccountKey=", "Zm9vYmFyYmF6cXV4cXV1eGNvcmdlZ3JhdWx0Z2FycGx5d2FsZG8rL0E9PQ=="),
+        "sas-token": sh("Endpoint=sb://x.example.com/;", "SharedAccessSignature", " sr=x&sig=abc&se=1&skn=k"),
+        "private-key": sh("-----BEGIN ", "RSA PRIVATE KEY-----\n", "MIIEowIBAAKCAQEA", "x" * 48),
+        "openssh-key": sh("-----BEGIN ", "OPENSSH PRIVATE KEY-----\n", "b3BlbnNzaC1rZXktdjEAAAAA", "y" * 40),
+        "ec-key": sh("-----BEGIN ", "EC PRIVATE KEY-----\n", "MHcCAQEEI", "z" * 48),
+        "plain-key": sh("-----BEGIN ", "PRIVATE KEY-----\n", "MIIEvQIBADANBgkqhkiG9w0B", "w" * 40),
+        "github-classic": sh("gh", "p_", "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"),
+        "github-fine": sh("github", "_pat_", "11ABCDEFG0123456789_abcdefghijklmnop"),
+        "aws": sh("AK", "IA", "ABCDEFGHIJKLMNOP"),
+        "slack": sh("xo", "xb-", "1234567890-abcdefghij"),
+        "bearer": sh("Authorization: ", "Bearer ", "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abcdefghijk"),
+    }
+
+    def test_each_shape_is_flagged_with_line_and_no_value(self):
+        for name, value in self.SHAPES.items():
+            with self.subTest(name=name):
+                repo = Repo(); self.addCleanup(repo.close); self.repo = repo
+                repo.write("site/config.txt", "line one\nvalue = " + value + "\n")
+                out = self.assertViolation("secret-shape", "site/config.txt:2")
+                self.assertNotIn(value, out)
+                self.assertNotIn(value[-12:], out)
+
+    def test_placeholders_pass(self):
+        lines = [sh("...&", "sig=", "REDACTED"), sh("AccountKey=", "REDACTED"), sh("AccountKey=", "<key>"),
+                 sh("AccountKey=", "${{ secrets.KEY }}"), "Authorization: Bearer <token>", sh("Bearer ", "${TOKEN}"),
+                 "the SharedAccessSignature header is built at run time", sh("gh", "p_", "short")]
+        self.repo.write("docs/runbooks/rotate.md", "\n".join(lines) + "\n")
+        self.assertClean()
+
+    def test_one_line_fake_pem_without_a_key_body_passes(self):
+        self.repo.write("tests/sign.test.ts", "const FAKE_PEM = '" + sh("-----BEGIN ", "RSA PRIVATE KEY-----") +
+                        "\\nfake-key-bytes\\n-----END RSA PRIVATE KEY-----';\n")
+        self.assertClean()
+
+    def test_pem_with_a_key_body_is_flagged_inline_or_on_the_next_line(self):
+        body = "MIIEowIBAAKCAQEA" + "q" * 48
+        self.repo.write("k1.txt", "k = '" + sh("-----BEGIN ", "PRIVATE KEY-----") + "\\n" + body + "'\n")
+        self.repo.write("k2.pem.txt", sh("-----BEGIN ", "OPENSSH PRIVATE KEY-----") + "\n" + body + "\n")
+        code, out = self.repo.run()
+        self.assertEqual(code, 1, out)
+        self.assertIn("secret-shape\tk1.txt:1", out)
+        self.assertIn("secret-shape\tk2.pem.txt:1", out)
+
+    def test_pem_body_after_headers_or_a_blank_line_is_flagged(self):
+        body = "MIIEowIBAAKCAQEA" + "q" * 48
+        texts = {
+            "legacy.key.txt": sh("-----BEGIN ", "RSA PRIVATE KEY-----\n") + "Proc-Type: 4,ENCRYPTED\n"
+                              "DEK-Info: AES-128-CBC,00112233445566778899AABBCCDDEEFF\n\n" + body + "\n",
+            "blank.key.txt": sh("-----BEGIN ", "PRIVATE KEY-----\n") + "\n" + body + "\n",
+            "pgp.asc.txt": sh("-----BEGIN ", "PGP PRIVATE KEY BLOCK-----\n") + "\n" + body + "\n",
+        }
+        for rel, text in texts.items():
+            self.repo.write(rel, text)
+        code, out = self.repo.run()
+        self.assertEqual(code, 1, out)
+        for rel in texts:
+            self.assertIn(f"secret-shape\t{rel}:1", out)
+
+    def test_escaped_and_reordered_signatures_are_flagged(self):
+        sig = "Ab3dEf6hIj9kLm2nOp5qRs8tUv1wXy4z"
+        texts = {
+            "a.json": '{"url": "https://prod.example.com/x/invoke?api-version=2016-10-01\\u0026sp=%2F\\u0026' + sh("sig", "=", sig) + '"}',
+            "b.txt": "next=https%3A%2F%2Fprod.example.com%2Finvoke%3Fsv%3D1.0%26" + sh("sig", "%3D", sig),
+            "c.txt": "?" + sh("sig=", "ab+/cd" + sig) + "&sv=2022-11-02&se=2030-01-01",
+            "d.txt": "DefaultEndpointsProtocol=https;" + sh("accountkey=", "Zm9vYmFyYmF6cXV4cXV1eGNvcmdlZ3JhdWx0Z2Fy"),
+            "e.txt": "?sv=1.0&" + sh("sig=", "REDACTED", sig),
+        }
+        for rel, text in texts.items():
+            self.repo.write(rel, text + "\n")
+        code, out = self.repo.run()
+        self.assertEqual(code, 1, out)
+        for rel in texts:
+            self.assertIn(f"secret-shape\t{rel}:1", out)
+
+    def test_storage_emulator_well_known_key_passes(self):
+        # The emulator's published development key, identified by its SHA-256 so this repo never holds it; a test that
+        # needs the real constant reads it from the emulator docs. Here: any other 88-char key is still flagged.
+        other = sh("AccountKey=", "Q" * 86, "==")
+        self.repo.write("t.test.ts", other + "\n")
+        self.assertViolation("secret-shape", "t.test.ts:1")
+
+    def test_published_public_keys_pass_by_hash(self):
+        import hashlib
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("check", CHECK)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        value = "Z" * 86 + "=="
+        self.repo.write("t.test.ts", sh("AccountKey=", value) + "\n")
+        self.assertTrue(mod.secret_hits(self.repo.root, "t.test.ts"))
+        mod.PUBLIC_KEY_SHA256 = frozenset({hashlib.sha256(value.encode()).hexdigest()})
+        self.assertEqual(mod.secret_hits(self.repo.root, "t.test.ts"), [])
+
+    def test_allow_does_not_exempt_secrets(self):
+        self.repo.write("cfg/app.txt", self.SHAPES["github-classic"] + "\n")
+        self.repo.config({"allow": ["cfg/app.txt"]})
+        self.assertViolation("secret-shape", "cfg/app.txt:1")
+
+    def test_binary_and_large_files_are_skipped(self):
+        p = self.repo.root / "public" / "blob.bin"
+        p.parent.mkdir(parents=True)
+        p.write_bytes(b"\0\1" + self.SHAPES["aws"].encode())
+        big = self.repo.root / "data" / "big.txt"
+        big.parent.mkdir(parents=True)
+        big.write_text(("x" * 1023 + "\n") * 2100 + self.SHAPES["aws"] + "\n")
+        self.assertClean()
+
+    def test_every_tracked_text_file_is_scanned(self):
+        self.repo.write(".github/workflows/x.yml", "env:\n  T: " + self.SHAPES["github-classic"] + "\n")
+        self.assertViolation("secret-shape", ".github/workflows/x.yml:2")
+
+
 class Config(Base):
     def test_valid_full_config(self):
         self.repo.write("docs/plans/p-history.md")
-        self.repo.config({"version": 1, "public": False, "image_paths": ["public/**"],
+        self.repo.config({"version": 1, "public": False, "asset_paths": ["public/**"],
                           "allow": ["docs/plans/p-history.md"]})
         self.assertClean()
 
@@ -363,7 +541,7 @@ class Config(Base):
         self.assertError()
 
     def test_wrong_type_is_an_error(self):
-        for bad in [{"public": "yes"}, {"image_paths": "public/**"}, {"allow": [1]}, {"version": 2}, []]:
+        for bad in [{"public": "yes"}, {"asset_paths": "public/**"}, {"allow": [1]}, {"version": 2}, []]:
             with self.subTest(bad=bad):
                 self.repo.config(bad)
                 self.assertError()
@@ -393,6 +571,14 @@ class Template(unittest.TestCase):
                     "docs/decisions.md"]:
             self.assertTrue((TEMPLATE / rel).is_file(), rel)
 
+    def test_template_names_the_secret_rule_and_all_test_shapes(self):
+        pr = (TEMPLATE / ".github/PULL_REQUEST_TEMPLATE.md").read_text()
+        self.assertIn("Secrets never tracked; trigger URLs never under a served path", pr)
+        claude = (TEMPLATE / "CLAUDE.md").read_text()
+        for shape in ["ROE", "DOE", "POE", "555-01xx", "4711", "CCM-471NN", "999", "1900-01-01", "1970-01-01",
+                      "example.com"]:
+            self.assertIn(shape, claude)
+
     def test_template_hook_is_the_canonical_hook(self):
         self.assertEqual((TEMPLATE / ".githooks/pre-commit").read_bytes(), HOOK.read_bytes())
         self.assertTrue(os.access(TEMPLATE / ".githooks/pre-commit", os.X_OK))
@@ -407,9 +593,9 @@ class Template(unittest.TestCase):
 
     def test_template_config_lists_the_default_image_paths(self):
         cfg = json.loads((TEMPLATE / ".repo-standard.json").read_text())
-        r = subprocess.run([sys.executable, str(CHECK), "--print-default-image-paths"], capture_output=True, text=True)
+        r = subprocess.run([sys.executable, str(CHECK), "--print-default-asset-paths"], capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(cfg["image_paths"], json.loads(r.stdout))
+        self.assertEqual(cfg["asset_paths"], json.loads(r.stdout))
 
 
 class ReusableWorkflow(unittest.TestCase):

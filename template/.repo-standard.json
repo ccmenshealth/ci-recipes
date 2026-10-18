@@ -1,12 +1,13 @@
 {
   "version": 1,
   "public": false,
-  "image_paths": [
+  "asset_paths": [
     "public/**",
     "**/public/**",
     "assets/**",
     "**/assets/**",
     "fixtures/golden/**",
+    "fixtures/synthetic/**",
     "**/*.ico",
     "**/*.icns",
     "**/*.appiconset/**",

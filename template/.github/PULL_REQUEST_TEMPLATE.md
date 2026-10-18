@@ -14,4 +14,5 @@
 
 - [ ] No patient identifiers; test data uses only the allowed shapes (STANDARD.md in ccmenshealth/ci-recipes)
 - [ ] Docs stay inside the fixed doc set; no status, hand-over or history files
+- [ ] Secrets never tracked; trigger URLs never under a served path
 - [ ] Independent review
