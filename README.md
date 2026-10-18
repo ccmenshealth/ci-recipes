@@ -11,6 +11,8 @@ file, line and pattern only, never the matched text. Allowed test-data shapes, t
 personas, 555-01xx or area-code-555 phones (and any impossible NANP number), the 4711 number block, CCM-471NN,
 999-prefixed sentinel record numbers, the placeholder dates 1900-01-01 and 1970-01-01, example.com e-mail, and the words
 synthetic / fixture / placeholder / sentinel on the line. Record-number and DOB shapes are also allowed under fixture paths.
+Besides test data it exempts exactly one business set, `PRACTICE_NUMBERS`: the practice's own published phone and fax
+(letterhead, website, forms). Never add a person's number to it.
 
 Every ccmenshealth repo carries a byte-identical copy at `scripts/identifier-guard.py` (so the pre-commit hook in
 `.githooks/pre-commit` works offline) and a thin workflow that calls the reusable workflow here:
