@@ -1,0 +1,25 @@
+name: identifier-guard
+# Blocks patient-identifier-shaped text (MRN/FIN/DOB/SSN/phone/LAST, FIRST/personal e-mail) in added lines.
+# Thin caller: the job lives in ccmenshealth/ci-recipes (.github/workflows/identifier-guard.yml), which first checks that
+# scripts/identifier-guard.py here is byte-identical to the canonical copy, then runs this repo's copy. Do not edit the
+# script in this repo; change it in ci-recipes and run sync.sh. Managed by ci-recipes/sync.sh.
+# The check appears as "identifier-guard / guard / guard" (a called job), where the in-repo job was "identifier-guard / guard".
+# Runs on ready pull requests (three-dot diff against the base) and once a week over the default branch's last 8 days.
+# Cost: one short GitHub-hosted Linux job per run, billed as 1 minute ($0.006); unchanged from the previous in-repo job.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  schedule:
+    - cron: '17 15 * * 1'   # Mondays 8:17 AM PT
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: identifier-guard-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  guard:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    uses: ccmenshealth/ci-recipes/.github/workflows/identifier-guard.yml@v1
+    with:
+      standard: true   # also run the repo-standard check (STANDARD.md in ci-recipes)

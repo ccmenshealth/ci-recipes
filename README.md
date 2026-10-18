@@ -36,6 +36,17 @@ copy (with the fix in the error), then runs the caller's own copy: three-dot dif
    repo's full-scan delta (file:line + pattern) in the body. `./sync.sh --only repo1,repo2` for a subset, `--dry-run`
    to look first. Until a repo merges its PR, its next guard run fails the hash check with the same fix instruction.
 
+## repo-standard
+
+[`STANDARD.md`](STANDARD.md) is the standard every repo follows (doc set, images, test data, guard, PR template,
+public-repo rule). `repo-standard/check.py` enforces the checkable part; a caller opts in with `with: standard: true`
+and the reusable workflow runs it after the scan in the same job. `template/` is what a new repo starts from
+(`./new-repo.sh <name> --private|--public [--dry-run]`); `./sync.sh --standard --only <repo>` adopts the standard in an
+existing repo, one PR each. Tests: `python3 -m unittest discover -s repo-standard/tests`.
+
+Tags: `v1` moves with every change that keeps existing callers' results the same (a new opt-in input does); a change
+that would alter what an existing caller runs gets a new major tag. Release tags (`v1.1`, …) mark each release.
+
 ### Files
 
 | Path | What |
@@ -46,9 +57,15 @@ copy (with the fix in the error), then runs the caller's own copy: three-dot dif
 | `identifier-guard/tests/` | unit tests |
 | `.github/workflows/identifier-guard.yml` | the reusable workflow (`workflow_call`) |
 | `.github/workflows/test.yml` | CI for this repo |
-| `sync.sh` | rollout: one PR per repo |
+| `sync.sh` | rollout: one PR per repo (`--standard` adopts the repo standard) |
+| `STANDARD.md` | the repo standard |
+| `repo-standard/check.py`, `repo-standard/tests/` | the standard check and its tests |
+| `template/` | the files a new repo starts from |
+| `new-repo.sh` | create a repo from the template |
+| `lib/apply.sh` | file placement shared by `sync.sh` and `new-repo.sh` |
 
 ### Cost
 
 One GitHub-hosted Linux job per guard run in each repo, billed as 1 minute ($0.006); the reusable workflow's second
-checkout adds a few seconds inside that minute. This repo's own tests run a few times a month: under $0.10/month.
+checkout adds a few seconds inside that minute, and the opt-in standard step about a second ($0). This repo's own
+tests run a few times a month: under $0.10/month.

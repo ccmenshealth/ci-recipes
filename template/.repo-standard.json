@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "public": false,
+  "image_paths": [
+    "public/**",
+    "**/public/**",
+    "assets/**",
+    "**/assets/**",
+    "fixtures/golden/**",
+    "**/*.ico",
+    "**/*.icns",
+    "**/*.appiconset/**",
+    "**/*.iconset/**",
+    "**/*.xcassets/**",
+    "**/icons/**",
+    "**/icon/**",
+    "**/app/icon.*",
+    "**/app/apple-icon.*"
+  ],
+  "allow": []
+}
