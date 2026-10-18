@@ -8,8 +8,8 @@ whose copy differs. Change it there and run sync.sh, never in a single repo.
 Checked patterns (on added lines only): SSN (dashed anywhere; labelled with or without dashes); labelled DOB
 (numeric or month-name dates) with a possible birth year; labelled MRN/FIN digits; CCM-NNNNN record numbers; US phone
 numbers (dashed, dotted, spaced, parenthesised, +1, and ten contiguous digits after a phone-ish label); LAST, FIRST
-(caps) next to a 5+ digit number or a date (not when the number is a 5-digit CPT / test code or a LOINC code); personal
-e-mail domains.
+(caps) next to a 5+ digit number or a date (not when that number has a 5-digit CPT / test-code or LOINC shape and no
+7+ digit number or date follows); personal e-mail domains.
 A line is allowed when it carries a synthetic marker (ROE/DOE/POE personas, 555-01xx or area-code-555 phones, any
 impossible NANP number (area code or exchange starting 0/1), the practice's own published phone and fax, the regulator's
 published toll-free number, the 4711/471
@@ -74,13 +74,16 @@ def impossible_nanp(digits):
 
 
 def code_number(m):
-    """True when the number after a LAST, FIRST shape is a test / procedure code, not a record number: exactly five
-    digits (CPT, Quest test code) or a LOINC code (12345-6). A ZIP shape (after a state abbreviation, ZIP+4) or a
-    5-digit run inside a longer number (12345.67, CCM-12345) is not a code. Dates always count."""
+    """True when the first number after a LAST, FIRST shape has the code shape, not a record number's: any standalone
+    5-digit number (CPT, Quest test code) or a LOINC code (12345-6). Not a code: a 5-digit run inside a longer number
+    (12345.67, 0.12345, CCM-12345), ZIP+4, or five digits right after an upper-case 2-letter state abbreviation. Even
+    after a code, a 7+ digit number or a date in the next 80 characters still flags the line (name, CPT, date, account)."""
     if not m.group("id") or len(m.group("id")) != 5:
         return False
     before, after = m.string[:m.start("id")], m.string[m.end("id"):]
     if re.search(r"[-.]$", before) or re.search(r"\b[A-Z]{2},?\s+$", before):
+        return False
+    if re.search(r"(?<![\d.\-])\d{7,14}(?!\d)|\b\d{1,2}/\d{1,2}/\d{2,4}\b", after[:80]):
         return False
     return re.match(r"-\d(?!\d)", after) is not None or re.match(r"[-.]\d", after) is None
 

@@ -264,7 +264,7 @@ class PracticeNumbers(unittest.TestCase):
         return ["call %s-%s-%s" % (a, e, l), "call %s.%s.%s" % (a, e, l), "call (%s) %s-%s" % (a, e, l),
                 "call +1%s" % n, "phone: %s" % n, "call %s %s %s" % (a, e, l)]
 
-    def test_practice_numbers_are_exempt_in_every_format(self):
+    def test_numbers_are_exempt_in_every_format(self):
         self.assertEqual(len(self.NUMBERS), 2)
         for n in self.NUMBERS:
             for line in self.formats(n):
@@ -282,7 +282,7 @@ class RegulatorNumbers(PracticeNumbers):
     same way. Read from the canonical script, never typed here."""
     NUMBERS = sorted(getattr(load_guard_from(os.path.join(HERE, "..", "identifier-guard.py")), "REGULATOR_NUMBERS", ()))
 
-    def test_practice_numbers_are_exempt_in_every_format(self):
+    def test_numbers_are_exempt_in_every_format(self):
         self.assertEqual(len(self.NUMBERS), 1)
         for n in self.NUMBERS:
             for line in self.formats(n):
@@ -326,6 +326,12 @@ class NameNextToACode(unittest.TestCase):
         self.assertEqual(patterns(SRC, "%s, 12 Main St, Ventura, CA %s" % (NAME, CPT)), ["name_near_id"])
         self.assertEqual(patterns(SRC, "%s %s-%s" % (NAME, CPT, d("3", 4))), ["name_near_id"])   # ZIP+4
         self.assertEqual(patterns(SRC, "%s %s.%s" % (NAME, CPT, d("3", 2))), ["name_near_id"])   # not a code: a decimal
+        self.assertEqual(patterns(SRC, "%s 0.%s" % (NAME, CPT)), ["name_near_id"])               # nor a 5-digit run inside one
+
+    def test_a_record_number_or_date_after_a_code_is_still_flagged(self):
+        self.assertEqual(patterns(SRC, "%s %s seen 03/14/%d" % (NAME, CPT, ADULT)), ["name_near_id"])
+        self.assertEqual(patterns(SRC, "%s %s then %s" % (NAME, CPT, d("2", 9))), ["name_near_id"])
+        self.assertEqual(patterns(SRC, "%s %s acct %s" % (NAME, LOINC, d("2", 8))), ["name_near_id"])
 
 
 class FailureMessage(unittest.TestCase):
