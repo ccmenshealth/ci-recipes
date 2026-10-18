@@ -360,16 +360,13 @@ phase_oidc() {
   say "oidc OK (old subjects stay until $OLD is archived)"
 }
 
-# Pipes stdin straight into an org repo secret (the value never sits in a shell variable, so bash -x cannot print it);
-# prints the name and the byte count.
+# Pipes stdin into an org repo secret; prints the name and the length only. Refuses to run under xtrace (bash -x would
+# print the value into the evidence file).
 set_secret() {
-  local name="$1" n
-  n="$(tee >(gh secret set "$name" -R "$NEW" >/dev/null 2>&1; echo $? > "$WORK/.secret-rc") | wc -c | tr -d ' ')"
-  wait
-  [ "$n" -gt 0 ] || die "empty value for $name"
-  [ "$(cat "$WORK/.secret-rc")" = 0 ] || die "gh secret set $name failed"
-  rm -f "$WORK/.secret-rc"
-  echo "set $name ($n bytes)"
+  case "$-" in *x*) die "refusing to set $1 under xtrace (set -x / bash -x)" ;; esac
+  local name="$1" v; v="$(cat)"; [ -n "$v" ] || die "empty value for $name"
+  printf '%s' "$v" | gh secret set "$name" -R "$NEW" || die "gh secret set $name failed"
+  echo "set $name (${#v} chars)"
 }
 
 phase_azure_secrets() {
