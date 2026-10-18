@@ -337,6 +337,31 @@ class NameNextToACode(unittest.TestCase):
         self.assertEqual(patterns(SRC, "%s %s dos 03-14-%d" % (NAME, CPT, ADULT)), ["name_near_id"])
 
 
+PERSONAL_EMAIL = "dev" + "@" + "gmail.com"                   # a personal-domain address, assembled at run time
+
+
+class LockfilesAreSkipped(unittest.TestCase):
+    """Machine-written dependency lockfiles (package authors' e-mails, hashes) are never our data."""
+    LOCKFILES = ("composer.lock", "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "Cargo.lock", "Package.resolved",
+                 "web/package-lock.json", "App.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved")
+
+    def test_lockfiles_are_not_scanned(self):
+        for path in self.LOCKFILES:
+            self.assertEqual(patterns(path, '"email": "%s"' % PERSONAL_EMAIL), [], path)
+
+    def test_other_files_and_lookalike_names_are_still_scanned(self):
+        for path in ("composer.json", "package.json", "composer.lock.md", "notes/yarn.lock.txt", "my-package-lock.json"):
+            self.assertEqual(patterns(path, '"email": "%s"' % PERSONAL_EMAIL), ["email"], path)
+
+    def test_whole_file_mode_skips_a_lockfile(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = os.path.join(td, "composer.lock")
+            with open(p, "w") as f:
+                f.write('"email": "%s"\n' % PERSONAL_EMAIL)
+            r = subprocess.run([sys.executable, GUARD, "--files", p], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stdout)
+
+
 class FailureMessage(unittest.TestCase):
     def test_message_names_the_allowed_shapes(self):
         with tempfile.TemporaryDirectory() as td:
