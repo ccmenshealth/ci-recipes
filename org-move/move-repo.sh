@@ -32,11 +32,12 @@ set -euo pipefail
 ORG="${ORG:-ccmhinc}"
 OLD_OWNER="${OLD_OWNER:-ccmenshealth}"
 GUARD_TAG="${GUARD_TAG:-v1.6}"
-CANON_OWNER="${CANON_OWNER:-$OLD_OWNER}"
+CANON_OWNER="${CANON_OWNER:-}"   # set below: OLD_OWNER for ci-recipes itself, ORG for every later repo
 DATE="${MOVE_DATE:-$(date +%Y%m%d)}"
 WORK="${WORK:-${TMPDIR:-/tmp}/org-move}"
 BUNDLES="${BUNDLES:-$HOME/Developer/output/org-move-bundles}"
 EVIDENCE_ROOT="${EVIDENCE:-$HOME/Developer/output/org-move-evidence}"
+# Perl-compatible (git grep -P): on macOS, git grep -E silently treats \b as matching nothing.
 PHRASES='\bPHI\b|protected health|patient data|\bleak|exposure|exposed|breach|incident|redact|scrub|saniti[sz]|purge|real patient|real data|actual patient|clean-?up|history rewrite|squash|removed from history|\bOCR\b|identifier guard'
 
 die() { echo "FAIL: $*" >&2; exit 1; }
@@ -47,6 +48,7 @@ usage() { sed -n '2,25p' "$0" >&2; exit 2; }
 PHASE="$1"; REPO="$2"; shift 2
 [[ "$REPO" =~ ^[A-Za-z0-9._-]+$ ]] || die "bad repo name '$REPO'"
 OLD="$OLD_OWNER/$REPO"; NEW="$ORG/$REPO"
+if [ -z "$CANON_OWNER" ]; then if [ "$REPO" = ci-recipes ]; then CANON_OWNER="$OLD_OWNER"; else CANON_OWNER="$ORG"; fi; fi
 EV="$EVIDENCE_ROOT/$REPO-$DATE"; PREP="$WORK/$REPO-prepared"
 mkdir -p "$WORK" "$EV"
 # Every phase's output also goes to its evidence file.
@@ -64,7 +66,25 @@ prepared_tree() {
 # The prepared tree is only valid while personal main has not moved since prepare.
 check_prepared_current() {
   local want; want="$(cat "$PREP.source" 2>/dev/null || true)"
+  [ -n "$want" ] || die "no recorded source commit; run: $0 prepare $REPO"
   [ "$want" = "$(old_main_sha)" ] || die "personal main moved since prepare (prepared from ${want:-nothing}); re-run prepare + certify"
+}
+
+# git grep that fails closed: rc 0 (hits) and 1 (none) are answers; anything else (bad pattern, not a repo) stops.
+ggrep() { local rc=0; git grep "$@" || rc=$?; [ "$rc" -le 1 ] || die "git grep failed (exit $rc)"; }
+
+# The prepared index is what push sends; certify and push refuse a working tree that differs from it.
+check_prepared_clean() {
+  git -C "$PREP" diff --quiet || die "prepared working tree differs from its index; re-run prepare"
+  [ -z "$(git -C "$PREP" ls-files --others --exclude-standard)" ] || die "untracked files in the prepared tree; re-run prepare"
+  [ "$(git -C "$PREP" write-tree)" = "$(prepared_tree)" ] || die "prepared index no longer matches the recorded tree"
+}
+
+# The phrase sweep must find a known hit, or the pattern engine is not doing what it says.
+self_test_sweep() {
+  local t="$WORK/sweep-selftest.txt"
+  printf 'x PHI y\nleak\nOCR\nidentifier guard\n' > "$t"
+  [ "$(cd "$WORK" && git grep --no-index -h -c -i -P -e "$PHRASES" -- "$(basename "$t")" 2>/dev/null)" = 4 ] || die "phrase sweep self-test failed"
 }
 
 phase_preflight() {
@@ -112,12 +132,12 @@ phase_prepare() {
     cd "$PREP"
     local files
     if [ "$REPO" = ci-recipes ]; then
-      files="$(git grep -lI "$OLD_OWNER" || true)"
+      files="$(ggrep -lI "$OLD_OWNER")"
       [ -z "$files" ] || printf '%s\n' "$files" | while IFS= read -r f; do
-        O="$OLD_OWNER" N="$ORG" perl -pi -e 's/(?<![\w@.-])\Q$ENV{O}\E(?!\.com|[\w-])/$ENV{N}/g' "$f"
+        O="$OLD_OWNER" N="$ORG" perl -pi -e 's/(?<![\w@.-])\Q$ENV{O}\E(?!\.[a-z]|[\w-])/$ENV{N}/g' "$f"
       done
     else
-      files="$(git grep -lI -E "$OLD_OWNER/(ci-recipes|$REPO)|ghcr\.io/$OLD_OWNER/|the $OLD_OWNER repo standard" || true)"
+      files="$(ggrep -lI -E "$OLD_OWNER/(ci-recipes|$REPO)|ghcr\.io/$OLD_OWNER/|the $OLD_OWNER repo standard")"
       [ -z "$files" ] || printf '%s\n' "$files" | while IFS= read -r f; do
         O="$OLD_OWNER" N="$ORG" R="$REPO" perl -pi -e '
           s{\Q$ENV{O}\E/ci-recipes(?![\w-])}{$ENV{N}/ci-recipes}g;
@@ -133,7 +153,7 @@ phase_prepare() {
       [ -d "$canon" ] || git -c advice.detachedHead=false clone -q --depth 1 --branch "$GUARD_TAG" "https://github.com/$ORG/ci-recipes.git" "$canon"
       src_caller="$canon/identifier-guard/caller-workflow.yml"
       [ -f .repo-standard.json ] && src_caller="$canon/template/.github/workflows/identifier-guard.yml"
-      strip() { sed -E -e 's/[[:space:]]*#.*$//' -e '/^[[:space:]]*$/d' -e 's#(identifier-guard\.yml)@[^[:space:]]*#\1@PIN#' "$1"; }
+      strip() { sed -E -e 's/(^|[[:space:]])#.*$//' -e '/^[[:space:]]*$/d' -e 's#(identifier-guard\.yml)@[^[:space:]]*#\1@PIN#' "$1"; }
       diff <(strip .github/workflows/identifier-guard.yml) <(strip "$src_caller") \
         || die "the repo's identifier-guard caller differs from $ORG/ci-recipes@$GUARD_TAG beyond comments and pin"
       sed -E "s#^( *uses: $ORG/ci-recipes/\.github/workflows/identifier-guard\.yml)@[^[:space:]]*#\1@$GUARD_TAG#" "$src_caller" > .github/workflows/identifier-guard.yml
@@ -147,7 +167,8 @@ phase_prepare() {
     say "rewrite diff (stat)"; git diff --cached --stat | cat
     git diff --cached --summary | grep -E 'mode change|create|delete' && die "rewrite changed modes or file set"
     echo "remaining $OLD_OWNER references outside the .com domain (file:line):"
-    git grep -nI -E "(^|[^@.[:alnum:]-])$OLD_OWNER($|[^.[:alnum:]-]|\.[^c])" | cut -d: -f1,2 || echo "  none"
+    local refs; refs="$(ggrep -z -nI -P "(?<![@.\w-])$OLD_OWNER(?!\.[a-z]|[\w-])" | perl -ne 'my ($f, $l) = split /\0/; print "$f:$l\n"')"
+    printf '%s\n' "${refs:-  none}"
   )
   local tree; tree="$(git -C "$PREP" write-tree)"
   echo "$tree" > "$PREP.tree"; echo "$src" > "$PREP.source"
@@ -158,28 +179,30 @@ phase_prepare() {
 
 phase_certify() {
   check_prepared_current
+  check_prepared_clean; self_test_sweep
   local tree canon="$WORK/canon-$CANON_OWNER-ci-recipes-$GUARD_TAG" rc=0 n
   tree="$(prepared_tree)"
-  [ "$(git -C "$PREP" write-tree)" = "$tree" ] || die "prepared index no longer matches the recorded tree"
   [ -d "$canon" ] || git -c advice.detachedHead=false clone -q --depth 1 --branch "$GUARD_TAG" "https://github.com/$CANON_OWNER/ci-recipes.git" "$canon"
   echo "canonical: $CANON_OWNER/ci-recipes@$GUARD_TAG commit $(git -C "$canon" rev-parse HEAD), guard blob $(git -C "$canon" hash-object identifier-guard/identifier-guard.py)"
   echo "tree certified: $tree"
   (
     cd "$PREP"
     say "1. identifier guard, whole files (regular files only)"
-    git ls-files -z | while IFS= read -r -d '' f; do [ -f "$f" ] && [ ! -L "$f" ] && printf '%s\0' "$f"; done \
+    git ls-files -z | while IFS= read -r -d '' f; do if [ -f "$f" ] && [ ! -L "$f" ]; then printf '%s\0' "$f"; fi; done \
       | xargs -0 python3 "$canon/identifier-guard/identifier-guard.py" --files && echo "guard: 0 findings" || { echo "guard: findings above (exit $?)"; exit 11; }
   ) || rc=1
   (
     cd "$PREP"
     say "1b. binary files (git's own text detection: index eol 'i/-text') and the repo-standard check"
     n=0
-    while IFS= read -r f; do echo "binary: $f ($(wc -c < "$f" | tr -d ' ') bytes)"; n=$((n+1)); done \
-      < <(git ls-files --eol | awk -F'\t' '$1 ~ /^i\/-text/ {print $2}')
+    local list; list="$(git -c core.quotePath=false ls-files --eol -z | perl -0 -ne 'chomp; my ($meta, $f) = split /\t/, $_, 2; print "$f\n" if $meta =~ m{^i/-text}')" \
+      || die "binary listing failed"
+    while IFS= read -r f; do [ -n "$f" ] || continue; echo "binary: $f ($(wc -c < "$f" | tr -d ' ') bytes)"; n=$((n+1)); done <<< "$list"
     echo "binary files: $n (each must match asset_paths in .repo-standard.json and be looked at)"
     if [ -f .repo-standard.json ]; then
-      local canon_guard="$canon/identifier-guard/identifier-guard.py"
-      [ -f scripts/identifier-guard.py ] && canon_guard="scripts/identifier-guard.py"   # owner line rewritten; rules identical
+      # The prepared copy carries the ORG owner line, so compare against ORG/ci-recipes@GUARD_TAG (cloned by prepare).
+      local canon_guard="$WORK/canon-$ORG-ci-recipes-$GUARD_TAG/identifier-guard/identifier-guard.py"
+      [ -f "$canon_guard" ] || canon_guard="$canon/identifier-guard/identifier-guard.py"
       python3 "$canon/repo-standard/check.py" --root . --canonical "$canon_guard" && echo "repo-standard: pass" || { echo "repo-standard: FAIL"; exit 12; }
     else
       echo "repo-standard: no .repo-standard.json (not a standard repo; binaries listed above are the check)"
@@ -189,10 +212,10 @@ phase_certify() {
     cd "$PREP"
     say "2. phrase sweep (file:line and term only)"
     local hits
-    hits="$(git grep -nI -i -o -E "$PHRASES" | awk -F: '{print $1":"$2"  ["tolower($3)"]"}' | sort -u || true)"
+    hits="$(ggrep -z -nI -i -o -P "$PHRASES" | perl -ne 'chomp; my ($f, $l, $m) = split /\0/; print "$f:$l  [" . lc($m) . "]\n"' | sort -u)"
     if [ -n "$hits" ]; then printf '%s\n' "$hits"; fi
-    echo "phrase hits: $(printf '%s' "$hits" | grep -c . || true) lines (each must be prevention language or be rewritten before the push)"
-    echo "repo description: $(gh api "repos/$OLD" --jq '.description // ""' | grep -o -i -E "$PHRASES" | tr '\n' ' ' || true)(terms only)"
+    echo "phrase hits: $(printf '%s' "$hits" | cut -d' ' -f1 | sort -u | grep -c . || true) lines (each must be prevention language or be rewritten before the push)"
+    echo "repo description: $(gh api "repos/$OLD" --jq '.description // ""' | perl -ne 'print lc($&) . " " while /'"$PHRASES"'/gi' | tr '\n' ' ' || true)(terms only)"
   )
   [ "$rc" = 0 ] || die "certification checks failed; fix in a PR on $OLD, then prepare + certify again"
   say "certify (machine part) OK; the independent reviewer's inference read is the remaining gate"
@@ -203,15 +226,15 @@ phase_create() {
     [ "$(gh api "repos/$NEW" --jq .private)" = true ] || die "$NEW exists and is not private"
     say "$NEW exists (private)"
   else
-    local desc; desc="$(gh api "repos/$OLD" --jq '.description // ""' | O="$OLD_OWNER" N="$ORG" perl -pe 's/(?<![\w@.-])\Q$ENV{O}\E(?!\.com|[\w-])/$ENV{N}/g')"
-    gh repo create "$NEW" --private --disable-wiki --description "$desc"
+    local desc; desc="$(gh api "repos/$OLD" --jq '.description // ""' | O="$OLD_OWNER" N="$ORG" perl -pe 's/(?<![\w@.-])\Q$ENV{O}\E(?!\.[a-z]|[\w-])/$ENV{N}/g')"
+    gh repo create "$NEW" --private --disable-wiki --description="$desc"
   fi
   gh api "repos/$NEW" --jq '"\(.full_name) private=\(.private) size=\(.size) default=\(.default_branch)"'
   say "create OK (set secrets/variables now, before push)"
 }
 
 phase_push() {
-  check_prepared_current
+  check_prepared_current; check_prepared_clean
   local tree commit head msgfile
   tree="$(prepared_tree)"
   head="$(gh api "repos/$NEW/commits/main" --jq .sha 2>/dev/null || true)"
@@ -232,8 +255,9 @@ phase_push() {
   [ "$rtree" = "$tree" ] || die "remote root tree $rtree != prepared $tree"
   echo "root commit: $commit"
   echo "root tree:   $rtree (= prepared tree)"
-  echo "parents: $(gh api "repos/$NEW/git/commits/$commit" --jq '.parents | length')"
-  echo "tags on $NEW: $(gh api "repos/$NEW/tags" --jq 'length')"
+  [ "$(gh api "repos/$NEW/git/commits/$commit" --jq '.parents | length')" = 0 ] || die "root commit has parents"
+  [ "$(gh api "repos/$NEW/tags" --jq 'length')" = 0 ] || die "tags exist on $NEW after the push"
+  echo "parents: 0; tags on $NEW: 0"
   say "push OK"
 }
 
@@ -254,7 +278,7 @@ phase_settings() {
   s="$(gh api "repos/$OLD" --jq '"-F allow_squash_merge=\(.allow_squash_merge) -F allow_merge_commit=\(.allow_merge_commit) -F allow_rebase_merge=\(.allow_rebase_merge) -F delete_branch_on_merge=\(.delete_branch_on_merge) -F allow_auto_merge=\(.allow_auto_merge) -F has_projects=\(.has_projects) -F has_issues=\(.has_issues)"')"
   # shellcheck disable=SC2086  # $s is a list of -F flags built above from booleans only
   gh api -X PATCH "repos/$NEW" -f default_branch=main $s --jq '"default=\(.default_branch) squash=\(.allow_squash_merge) merge=\(.allow_merge_commit) rebase=\(.allow_rebase_merge) delete_branch=\(.delete_branch_on_merge) auto_merge=\(.allow_auto_merge) issues=\(.has_issues) wiki=\(.has_wiki) private=\(.private)"'
-  if gh api "repos/$NEW/vulnerability-alerts" --silent 2>/dev/null; then echo "dependabot alerts: on (204)"; else echo "dependabot alerts: OFF (404); enabling"; gh api -X PUT "repos/$NEW/vulnerability-alerts" --silent && echo "dependabot alerts: on (PUT 204)"; fi
+  if gh api "repos/$NEW/vulnerability-alerts" --silent 2>/dev/null; then echo "dependabot alerts: on (204)"; else echo "dependabot alerts: OFF (404); enabling"; gh api -X PUT "repos/$NEW/vulnerability-alerts" --silent || die "enabling Dependabot alerts failed"; echo "dependabot alerts: on (PUT 204)"; fi
   echo "actions secrets: $(gh api "repos/$NEW/actions/secrets" --jq '[.secrets[].name] | join(",")')"
   echo "hooks: $(gh api "repos/$NEW/hooks" --jq length)"
   say "settings OK"
