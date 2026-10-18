@@ -7,8 +7,11 @@
 # wiki, Actions enabled with read-only default token and no PR approvals by Actions; a public repo allows only
 # GitHub-owned actions and ci-recipes' reusable workflow. Finally prints what the owner must still do.
 #
-# usage: ./new-repo.sh <name> --private|--public [--dry-run] [--owner OWNER]
-#   --dry-run  build and check the tree, print the gh calls; no network, nothing created. The tree is kept.
+# The caller pins the latest v1.N ci-recipes tag on origin (or --tag), which must carry this clone's guard.
+#
+# usage: ./new-repo.sh <name> --private|--public [--dry-run] [--owner OWNER] [--tag v1.N]
+#   --dry-run  build and check the tree, print the gh calls; no network (the pin is the latest local v1.N tag), nothing
+#              created. The tree is kept.
 # Requires: git, python3; gh (logged in as the owner) unless --dry-run.
 set -euo pipefail
 
@@ -17,20 +20,30 @@ RECIPES="$HERE"
 # shellcheck source=lib/apply.sh
 . "$HERE/lib/apply.sh"
 
-OWNER=ccmenshealth; NAME=""; VIS=""; DRY=0
+OWNER=ccmenshealth; NAME=""; VIS=""; DRY=0; PIN_TAG=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --private) VIS=private; shift ;;
     --public) VIS=public; shift ;;
     --dry-run) DRY=1; shift ;;
     --owner) [ -n "${2:-}" ] || { echo "--owner needs a value" >&2; exit 2; }; OWNER="$2"; shift 2 ;;
-    -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
+    --tag) [ -n "${2:-}" ] || { echo "--tag needs a value" >&2; exit 2; }; PIN_TAG="$2"; shift 2 ;;
+    -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
     -*) echo "unknown argument: $1" >&2; exit 2 ;;
     *) [ -z "$NAME" ] || { echo "one name only" >&2; exit 2; }; NAME="$1"; shift ;;
   esac
 done
 if [ -z "$NAME" ] || [ -z "$VIS" ]; then echo "usage: ./new-repo.sh <name> --private|--public [--dry-run]" >&2; exit 2; fi
 [[ "$NAME" =~ ^[a-z0-9][a-z0-9-]{0,99}$ ]] || { echo "name must be lower-case letters, digits and dashes" >&2; exit 2; }
+
+if [ "$DRY" = 1 ]; then
+  PIN_TAG="${PIN_TAG:-$(latest_release_tag .)}"
+  if [ -z "$PIN_TAG" ]; then PIN_TAG=v1.0; echo "dry run: no local v1.N tag; the caller shows @$PIN_TAG" >&2; fi
+else
+  PIN_TAG="${PIN_TAG:-$(latest_release_tag origin)}"
+  check_pin_tag "$PIN_TAG" || exit 2
+fi
+export PIN_TAG
 
 run() { if [ "$DRY" = 1 ]; then printf '    would run:'; printf ' %q' "$@"; echo; else "$@"; fi; }
 

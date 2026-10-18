@@ -68,8 +68,9 @@ Every repo carries `scripts/identifier-guard.py` (byte-identical to `identifier-
 `.githooks/pre-commit` (byte-identical to `identifier-guard/pre-commit`; `git config core.hooksPath .githooks` once per
 clone) and `.github/workflows/identifier-guard.yml`, the thin caller of the reusable workflow. *Why: the hook stops an
 identifier before it is committed, offline; CI stops it before it is merged; one canonical copy keeps them identical.*
-Change the guard here and run `./sync.sh`; never edit a repo's copy. Tags (`v1`, `v1.N`) are lightweight, so the
-reusable workflow's `job.workflow_sha` is the commit itself.
+Change the guard here, cut the next `v1.N` tag and run `./sync.sh`; never edit a repo's copy. The caller pins that exact
+tag (no moving tag), so a repo changes only through its sync PR. Tags are lightweight, so the reusable workflow's
+`job.workflow_sha` is the commit itself.
 
 ## Pull requests
 
@@ -139,7 +140,7 @@ The reusable workflow runs the check after the identifier scan, in the same job,
 jobs:
   guard:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    uses: ccmenshealth/ci-recipes/.github/workflows/identifier-guard.yml@v1
+    uses: ccmenshealth/ci-recipes/.github/workflows/identifier-guard.yml@v1.5   # exact release tag; sync.sh writes the current one
     with:
       standard: true
 ```

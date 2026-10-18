@@ -26,7 +26,7 @@ Every ccmenshealth repo carries a byte-identical copy at `scripts/identifier-gua
 ```yaml
 jobs:
   guard:
-    uses: ccmenshealth/ci-recipes/.github/workflows/identifier-guard.yml@v1
+    uses: ccmenshealth/ci-recipes/.github/workflows/identifier-guard.yml@v1.5   # exact release tag; sync.sh writes the current one
 ```
 
 The reusable workflow checks out the caller, fails if its `scripts/identifier-guard.py` differs from the canonical
@@ -39,10 +39,12 @@ copy (with the fix in the error), then runs the caller's own copy: three-dot dif
 1. Add a failing test row to `identifier-guard/tests/test_identifier_guard.py` (stdlib unittest; literals in the test
    file use only the allowed shapes, flagged values are assembled at run time), then fix the script.
 2. `python3 -m unittest discover -s identifier-guard/tests` and open a PR here; CI runs the tests and scans this repo.
-3. After the merge, move the `v1` tag to the new commit (`git tag -f v1 && git push -f origin v1`, lightweight) and run `./sync.sh`
-   from this clone: it clones each repo, copies the script, hook and caller workflow, and opens one PR per repo with the
-   repo's full-scan delta (file:line + pattern) in the body. `./sync.sh --only repo1,repo2` for a subset, `--dry-run`
-   to look first. Until a repo merges its PR, its next guard run fails the hash check with the same fix instruction.
+3. After the merge, cut the next release tag on the merge commit (`git tag v1.N <commit> && git push origin v1.N`,
+   lightweight, never moved) and run `./sync.sh` from a clone at that commit: it pins every caller to the latest v1.N
+   on origin (or `--tag`), refuses a tag whose guard is not this clone's, clones each repo, copies the script, hook and
+   pinned caller, and opens one PR per repo with the repo's full-scan delta (file:line + pattern) in the body.
+   `./sync.sh --only repo1,repo2` for a subset, `--dry-run` to look first. Until a repo merges its PR it keeps running
+   its old pin, which still passes; nothing goes red between releases.
 
 ## repo-standard
 
@@ -52,9 +54,11 @@ and the reusable workflow runs it after the scan in the same job. `template/` is
 (`./new-repo.sh <name> --private|--public [--dry-run]`); `./sync.sh --standard --only <repo>` adopts the standard in an
 existing repo, one PR each. Tests: `python3 -m unittest discover -s repo-standard/tests`.
 
-Tags: `v1` moves with every change that keeps existing callers' results the same (a new opt-in input does); a change
-that would alter what an existing caller runs gets a new major tag. Release tags (`v1.1`, …) mark each release. All tags
-are lightweight (`git tag -f v1 <commit>`, no `-a`), so `job.workflow_sha` in the reusable workflow is the commit.
+Tags: callers pin an exact release tag (`v1.N`); there is no moving tag, so no tag is ever force-pushed. Every merge
+that callers should pick up gets the next `v1.N`, and `sync.sh` moves each repo to it in its own PR; a change to the
+reusable workflow's inputs that existing callers cannot take as is starts `v2.0`. The old moving `v1` tag stays at
+`67e3680` only until the last repo pins an exact tag, then it is deleted. All tags are lightweight (no `-a`), so
+`job.workflow_sha` in the reusable workflow is the commit.
 
 ### Files
 
@@ -72,7 +76,7 @@ are lightweight (`git tag -f v1 <commit>`, no `-a`), so `job.workflow_sha` in th
 | `template/` | the files a new repo starts from |
 | `new-repo.sh` | create a repo from the template |
 | `sweep.sh` | read-only audit of every repo against the standard (run from the owner's Mac) |
-| `lib/apply.sh` | file placement shared by `sync.sh` and `new-repo.sh` |
+| `lib/apply.sh`, `lib/tests/` | file placement and tag pinning shared by `sync.sh` and `new-repo.sh`, and its tests |
 
 ### Cost
 

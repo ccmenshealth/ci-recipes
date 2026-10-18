@@ -40,7 +40,7 @@ jobs:
         with:
           repository: ccmenshealth/ci-recipes
           # job.workflow_sha = the commit of the workflow file that defines this job, i.e. this reusable workflow at the
-          # ref the caller pinned (@v1). The next step fails if it is empty rather than silently comparing against main.
+          # exact release tag the caller pinned (@v1.N). The next step fails if it is empty rather than silently comparing against main.
           ref: ${{ job.workflow_sha }}
           path: .ci-recipes
           persist-credentials: false

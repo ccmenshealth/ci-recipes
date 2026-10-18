@@ -22,11 +22,13 @@ jobs:
       - name: Lint (byte-compile, warnings are errors)
         run: >-
           python3 -W error -m py_compile identifier-guard/identifier-guard.py identifier-guard/tests/test_identifier_guard.py
-          repo-standard/check.py repo-standard/tests/test_check.py
+          repo-standard/check.py repo-standard/tests/test_check.py lib/tests/test_apply.py
       - name: Unit tests (identifier guard)
         run: python3 -m unittest discover -s identifier-guard/tests -p 'test_*.py' -v
       - name: Unit tests (repo standard)
         run: python3 -m unittest discover -s repo-standard/tests -p 'test_*.py' -v
+      - name: Unit tests (lib/apply.sh, tag pinning)
+        run: python3 -m unittest discover -s lib/tests -p 'test_*.py' -v
       - name: Shell lint
         run: |
           shellcheck -x sync.sh new-repo.sh sweep.sh lib/apply.sh
