@@ -116,7 +116,7 @@ per violation: rule, path, fix. Paths only, never file content. Exit 0 clean, 1 
 | `narrative-name` | a document file (`.md`, `.txt`, `.rst`, `.html`, `.pdf`, `.docx`, …, or no extension) is named like narrative: contains hand-off/handoff, ledger, current-state, resume-prompt or startup-prompt; a history of the work (`session-history`, `change-history`, `HISTORY.md`); or the whole name is progress, status, todo(s), bookmark(s) |
 | `narrative-dir` | any file under `docs/` sits in a directory named progress, todo(s), audit(s), archive(d), history/histories, handoff(s), ledger(s), sessions or status; or a top-level directory is named archive(d), history/histories or handoff(s) |
 | `binary-path` | an image (`png jpg jpeg gif webp bmp tif tiff heic heif avif svg ico icns`) or binary document (`pdf doc docx xls xlsx ppt pptx odt ods odp`) is under `docs/` or outside the allowed paths |
-| `secret-shape` | a tracked text file (no NUL byte, at most 2 MB) has a signed URL (`sig=`), SAS token, storage `AccountKey=`, `SharedAccessSignature`, private-key block, GitHub, AWS or Slack token, or a long bearer token; reported as path:line and the shape's name, never the text. Placeholders pass; Azure client secrets have no shape and are not detected |
+| `secret-shape` | a tracked text file (no NUL byte, at most 2 MB) has a signed URL (`sig=`, also as `\u0026sig=` or `%26sig%3D`), SAS token, storage `AccountKey=`, `SharedAccessSignature`, private-key or PGP private-key block with a body, GitHub, AWS or Slack token, or a long bearer token; reported as path:line and the shape's name, never the text. Placeholders pass; Azure client secrets have no shape and are not detected |
 | `required-file` | `README.md` or `CLAUDE.md` is missing |
 | `pr-template` | `.github/PULL_REQUEST_TEMPLATE.md` is missing or has no `CI cost` line |
 | `guard` | `scripts/identifier-guard.py` is missing or differs from the canonical copy |
@@ -157,7 +157,7 @@ the hook, memory. `--dry-run` builds and checks the tree and prints the GitHub c
 A repo that skipped the template has no caller, so nothing in it runs the check. `./sweep.sh` (read-only) lists every
 non-archived repo of the owner, reports whether it has the caller with `standard: true`, and with `--check` runs
 `check.py` on a fresh clone of each. This repo is public and its CI token cannot read private repos, so the sweep runs
-from the owner's Mac, from the Monday scheduled task (`gh` logged in as the owner).
+from the owner's Mac (`gh` logged in as the owner); the owner's weekly scheduled task is its intended caller.
 
 ## Existing repos
 

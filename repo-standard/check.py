@@ -53,33 +53,43 @@ REPO_REF = re.compile(r"""^\s*(?:-\s*)?(?:uses|repository):\s*['"]?([\w.-]+/[\w.
 # asset_paths entries that would allow a screenshot at the top level or under docs/ are refused.
 BROAD_PROBES = ["probe.png", "docs/probe.png", "docs/screenshots/probe.png", "some/dir/probe.png", "some/img/probe.png"]
 KEYS = {"version": int, "public": bool, "asset_paths": list, "allow": list}
+NOT_PLACEHOLDER = r"(?!REDACTED(?![A-Za-z0-9%_+/-]))"  # REDACTED, and nothing glued to it
 # Secret shapes: reported as rule, path:line and shape name, never the matched text. `allow` never exempts them; a
 # placeholder (REDACTED, <key>, ${VAR}) is the only way through. Azure client secrets have no shape and are not detected.
 SECRET_SHAPES = [
-    ("signed URL (sig=)", re.compile(r"[?&]sig=(?!REDACTED)[A-Za-z0-9%_-]{20,}")),
-    ("SAS token (sv=…&sig=)", re.compile(r"sv=20\d\d-\d\d-\d\d&.*\bsig=(?!REDACTED)[^&\s\"']")),
-    ("storage AccountKey", re.compile(r"AccountKey=(?!REDACTED)[A-Za-z0-9+/]{20,}")),
-    ("SharedAccessSignature", re.compile(r"SharedAccessSignature(?:\s+sr=|=(?!REDACTED)[^;\s\"']{20,})")),
-    ("private key", re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA |ENCRYPTED )?PRIVATE KEY-----")),  # with a body
+    # sig= after ?, &, a JSON-escaped & (\u0026) or a URL-encoded one (%26), with = possibly encoded as %3D
+    ("signed URL (sig=)", re.compile(r"(?:[?&]|\\u0026|%26)sig(?:=|%3D)" + NOT_PLACEHOLDER + r"[A-Za-z0-9%_+/-]{20,}", re.I)),
+    ("SAS token (sv=…&sig=)", re.compile(r"sv=20\d\d-\d\d-\d\d&.*\bsig=" + NOT_PLACEHOLDER + r"[^&\s\"']")),
+    ("storage AccountKey", re.compile(r"AccountKey=" + NOT_PLACEHOLDER + r"[A-Za-z0-9+/]{20,}", re.I)),
+    ("SharedAccessSignature", re.compile(r"SharedAccessSignature(?:\s+sr=|=" + NOT_PLACEHOLDER + r"[^;\s\"']{20,})")),
+    ("private key", re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA |ENCRYPTED |PGP )?PRIVATE KEY(?: BLOCK)?-----")),
     ("GitHub token", re.compile(r"\bgh[opsu]_[A-Za-z0-9]{36}\b|\bgithub_pat_[A-Za-z0-9_]{20,}")),
     ("AWS access key", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
     ("Slack token", re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}")),
     ("bearer token", re.compile(r"\bBearer\s+[A-Za-z0-9._~+/-]{30,}")),
 ]
 SECRET_MAX_BYTES = 2 * 1024 * 1024
-ACCOUNT_KEY = re.compile(r"AccountKey=([A-Za-z0-9+/=]+)")
+ACCOUNT_KEY = re.compile(r"AccountKey=([A-Za-z0-9+/=]+)", re.I)
 # Keys that are published, not secret: the Azure storage emulator's documented development key. Matched by SHA-256 so
 # this public repo never carries the value.
 PUBLIC_KEY_SHA256 = frozenset({"0011cc25eb4320717494d2703e8cba85743e71b500283c21c8b88147992f9059"})
 PEM_BODY = re.compile(r"[A-Za-z0-9+/=]{40,}")
+PEM_LOOKAHEAD = 8  # lines after the header: room for Proc-Type / DEK-Info / Version headers and a blank line
 
 
-def is_secret(name, rx, line, next_line):
+def is_secret(name, rx, line, following):
     m = rx.search(line)
     if not m:
         return False
-    if name == "private key":  # a header with no key body (a one-line test fake) is not a key
-        return bool(PEM_BODY.search(line[m.end():]) or PEM_BODY.search(next_line))
+    if name == "private key":  # a header with no key body before -----END (a one-line test fake) is not a key
+        rest = [line[m.end():]] + following
+        for chunk in rest:
+            body, end, _ = chunk.partition("-----END")
+            if PEM_BODY.search(body):
+                return True
+            if end:
+                return False
+        return False
     if name == "storage AccountKey":
         return any(hashlib.sha256(k.encode()).hexdigest() not in PUBLIC_KEY_SHA256 for k in ACCOUNT_KEY.findall(line))
     return True
@@ -162,9 +172,9 @@ def secret_hits(root, f):
     hits = []
     lines = data.decode("utf-8", "replace").splitlines()
     for n, line in enumerate(lines, 1):
-        next_line = lines[n] if n < len(lines) else ""
+        following = lines[n:n + PEM_LOOKAHEAD]
         for name, rx in SECRET_SHAPES:
-            if is_secret(name, rx, line, next_line):
+            if is_secret(name, rx, line, following):
                 hits.append(("secret-shape", f"{f}:{n}", f"{name}: secrets, keys and signed trigger URLs are never "
                              "tracked; remove it, rotate it, and use a placeholder (REDACTED)"))
                 break

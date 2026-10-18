@@ -250,7 +250,7 @@ class Images(Base):
     def test_old_image_paths_key_is_an_error_naming_the_new_one(self):
         self.repo.config('{"image_paths": ["public/**"]}')
         out = self.assertError()
-        self.assertIn("asset_paths", out)
+        self.assertIn("'image_paths' is now 'asset_paths'", out)
 
     def test_images_under_docs_are_never_allowed(self):
         for rel in ["docs/assets/screen.png", "docs/public/s.png", "docs/icons/s.png", "docs/x/app/icon.png"]:
@@ -455,6 +455,37 @@ class SecretShapes(Base):
         self.assertEqual(code, 1, out)
         self.assertIn("secret-shape\tk1.txt:1", out)
         self.assertIn("secret-shape\tk2.pem.txt:1", out)
+
+    def test_pem_body_after_headers_or_a_blank_line_is_flagged(self):
+        body = "MIIEowIBAAKCAQEA" + "q" * 48
+        texts = {
+            "legacy.key.txt": sh("-----BEGIN ", "RSA PRIVATE KEY-----\n") + "Proc-Type: 4,ENCRYPTED\n"
+                              "DEK-Info: AES-128-CBC,00112233445566778899AABBCCDDEEFF\n\n" + body + "\n",
+            "blank.key.txt": sh("-----BEGIN ", "PRIVATE KEY-----\n") + "\n" + body + "\n",
+            "pgp.asc.txt": sh("-----BEGIN ", "PGP PRIVATE KEY BLOCK-----\n") + "\n" + body + "\n",
+        }
+        for rel, text in texts.items():
+            self.repo.write(rel, text)
+        code, out = self.repo.run()
+        self.assertEqual(code, 1, out)
+        for rel in texts:
+            self.assertIn(f"secret-shape\t{rel}:1", out)
+
+    def test_escaped_and_reordered_signatures_are_flagged(self):
+        sig = "Ab3dEf6hIj9kLm2nOp5qRs8tUv1wXy4z"
+        texts = {
+            "a.json": '{"url": "https://prod.example.com/x/invoke?api-version=2016-10-01\\u0026sp=%2F\\u0026' + sh("sig", "=", sig) + '"}',
+            "b.txt": "next=https%3A%2F%2Fprod.example.com%2Finvoke%3Fsv%3D1.0%26" + sh("sig", "%3D", sig),
+            "c.txt": "?" + sh("sig=", "ab+/cd" + sig) + "&sv=2022-11-02&se=2030-01-01",
+            "d.txt": "DefaultEndpointsProtocol=https;" + sh("accountkey=", "Zm9vYmFyYmF6cXV4cXV1eGNvcmdlZ3JhdWx0Z2Fy"),
+            "e.txt": "?sv=1.0&" + sh("sig=", "REDACTED", sig),
+        }
+        for rel, text in texts.items():
+            self.repo.write(rel, text + "\n")
+        code, out = self.repo.run()
+        self.assertEqual(code, 1, out)
+        for rel in texts:
+            self.assertIn(f"secret-shape\t{rel}:1", out)
 
     def test_storage_emulator_well_known_key_passes(self):
         # The emulator's published development key, identified by its SHA-256 so this repo never holds it; a test that

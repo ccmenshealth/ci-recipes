@@ -7,10 +7,11 @@
 # Prints one line per repo and, with --check, the findings. Never writes to any repo.
 #
 # This repo is public and its CI token cannot read private repos, so the sweep runs from the owner's Mac (gh logged in
-# as the owner), e.g. from the Monday scheduled task.
+# as the owner); the owner's weekly scheduled task is the intended caller.
 #
 # usage: ./sweep.sh [--check] [--only repo1,repo2] [--owner OWNER] [--workdir DIR]
-# Exit 0 all conform, 1 a repo lacks the caller, lacks standard: true, or fails the check, 2 error.
+# Exit 0 all conform, 1 a repo lacks the caller, lacks standard: true, or fails the check, 2 error (a repo that cannot be
+# read or cloned, or a check that errors; the sweep still reports the other repos).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -21,24 +22,30 @@ while [ $# -gt 0 ]; do
     --only) [ -n "${2:-}" ] || { echo "--only needs a value" >&2; exit 2; }; ONLY="$2"; shift 2 ;;
     --owner) [ -n "${2:-}" ] || { echo "--owner needs a value" >&2; exit 2; }; OWNER="$2"; shift 2 ;;
     --workdir) [ -n "${2:-}" ] || { echo "--workdir needs a path" >&2; exit 2; }; WORKDIR="$2"; shift 2 ;;
-    -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 CALLER_USES="uses: $OWNER/ci-recipes/.github/workflows/identifier-guard.yml@"
 
 if [ -n "$ONLY" ]; then
-  list="$(printf '%s\n' "${ONLY//,/$'\n'}" | while IFS= read -r r; do
-    [ -n "$r" ] && gh api "repos/$OWNER/$r" --jq '"\(.name) \(.visibility) \(.default_branch)"'; done)"
+  list=""
+  for r in ${ONLY//,/ }; do
+    row="$(gh api "repos/$OWNER/$r" --jq '"\(.name) \(.visibility) \(.default_branch)"' < /dev/null)" \
+      || { echo "cannot read $OWNER/$r" >&2; exit 2; }
+    list="$list$row"$'\n'
+  done
 else
   list="$(gh repo list "$OWNER" --no-archived --limit 500 --json name,visibility,defaultBranchRef \
-    --jq '.[] | "\(.name) \(.visibility | ascii_downcase) \(.defaultBranchRef.name // "")"' | sort)"
+    --jq '.[] | "\(.name) \(.visibility | ascii_downcase) \(.defaultBranchRef.name // "")"' < /dev/null | sort)" \
+    || { echo "cannot list $OWNER's repositories" >&2; exit 2; }
 fi
 [ -n "$list" ] || { echo "no repositories found for $OWNER" >&2; exit 2; }
 mkdir -p "$WORKDIR"
 
-bad=0
+bad=0; err=0
 while read -r repo vis branch; do
+  [ -n "$repo" ] || continue
   [ "$repo" = ci-recipes ] && continue
   if [ -z "$branch" ]; then echo "$repo  empty repository"; continue; fi
   caller="$(gh api -H 'Accept: application/vnd.github.raw' \
@@ -50,15 +57,21 @@ while read -r repo vis branch; do
   if [ "$has_caller" = no ] || [ "$has_std" = no ]; then bad=1; fi
   if [ "$CHECK_TREE" = 1 ]; then
     clone="$WORKDIR/$repo"; rm -rf "$clone"
-    git clone -q --depth 1 --branch "$branch" "https://github.com/$OWNER/$repo.git" "$clone" < /dev/null
+    if ! git clone -q --depth 1 --branch "$branch" "https://github.com/$OWNER/$repo.git" "$clone" < /dev/null; then
+      echo "$line  check=clone-failed"; err=1; continue
+    fi
     flag=(); if [ "$vis" = public ]; then flag=(--public); fi
     rc=0; out="$(python3 "$HERE/repo-standard/check.py" --root "$clone" ${flag[@]+"${flag[@]}"} 2>&1 < /dev/null)" || rc=$?
     line="$line  check=$rc"
-    if [ "$rc" != 0 ]; then bad=1; fi
     echo "$line"
-    if [ "$rc" != 0 ]; then printf '%s\n' "$out" | grep -v '^repo-standard:' | cut -f1,2 | sed 's/^/    /'; fi
+    case "$rc" in
+      0) ;;
+      1) bad=1; printf '%s\n' "$out" | grep -v '^repo-standard:' | cut -f1,2 | sed 's/^/    /' ;;
+      *) err=1; printf '%s\n' "$out" | sed 's/^/    /' ;;
+    esac
   else
     echo "$line"
   fi
 done <<< "$list"
+if [ "$err" = 1 ]; then exit 2; fi
 exit "$bad"
