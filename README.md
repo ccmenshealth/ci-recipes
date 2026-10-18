@@ -76,6 +76,7 @@ reusable workflow's inputs that existing callers cannot take as is starts `v2.0`
 | `new-repo.sh` | create a repo from the template |
 | `sweep.sh` | read-only audit of every repo against the standard (run from the owner's Mac) |
 | `lib/apply.sh`, `lib/tests/` | file placement and tag pinning shared by `sync.sh` and `new-repo.sh`, and its tests |
+| `org-move/move-repo.sh` | move one repo from the personal account to the organization as one "Initial import" commit, phase by phase (header lists the phases) |
 
 ### Cost
 
