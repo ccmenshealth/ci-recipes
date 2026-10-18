@@ -71,7 +71,7 @@ SECRET_SHAPES = [
 SECRET_MAX_BYTES = 2 * 1024 * 1024
 ACCOUNT_KEY = re.compile(r"AccountKey=([A-Za-z0-9+/=]+)", re.I)
 # Keys that are published, not secret: the Azure storage emulator's documented development key. Matched by SHA-256 so
-# this public repo never carries the value.
+# this repo never carries the value.
 PUBLIC_KEY_SHA256 = frozenset({"0011cc25eb4320717494d2703e8cba85743e71b500283c21c8b88147992f9059"})
 PEM_BODY = re.compile(r"[A-Za-z0-9+/=]{40,}")
 PEM_LOOKAHEAD = 8  # lines after the header: room for Proc-Type / DEK-Info / Version headers and a blank line

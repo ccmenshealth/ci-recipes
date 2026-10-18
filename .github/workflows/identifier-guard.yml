@@ -7,7 +7,7 @@ name: identifier-guard (reusable)
 # 3. Only when the caller passes `standard: true`: runs repo-standard/check.py (STANDARD.md) from the called ref against
 #    the caller, after the scan, so a standard failure never hides the scan result. Default false: callers that do not
 #    opt in run exactly the steps above.
-# Public repo: no secrets, no self-hosted runner. Private callers may pass runs-on for their own Linux runner.
+# No secrets; ubuntu-latest unless a private caller passes runs-on for its own Linux runner.
 # Cost: one short job per run, billed as 1 GitHub-hosted Linux minute ($0.006) when runs-on is ubuntu-latest; the
 # standard step adds about a second inside that minute ($0).
 on:

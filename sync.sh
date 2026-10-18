@@ -20,7 +20,7 @@
 #   --dry-run   clone, copy, scan, check and print the PR body; no commit, push or PR
 #   --force     push and open a PR even if one is already open for the branch (the branch is replaced)
 #   --tag       the release tag to pin (default: the latest v1.N on origin); a dry run only warns if it lacks this guard
-# Requires: git, gh (logged in as the ccmenshealth account, with `gh auth setup-git` so private clones work), python3.
+# Requires: git, gh (logged in as an account with write access to the owner's repos, with `gh auth setup-git` so private clones work), python3.
 # The push uses --force-with-lease with the lease taken at clone time: it replaces an existing remote ci/identifier-guard-v1
 # (for example a closed PR's branch) and only protects against a push that lands between the clone and the push.
 set -euo pipefail
@@ -122,9 +122,9 @@ for repo in "${REPOS[@]}"; do
       echo "## Identifier guard"
       echo
     fi
-    echo "Thin caller for the shared identifier guard: \`scripts/identifier-guard.py\` and \`.githooks/pre-commit\` become byte-identical copies of \`ccmenshealth/ci-recipes\` @ ${RECIPES_REV} (script blob \`${CANON_SHA:0:8}\`); \`.github/workflows/identifier-guard.yml\` now calls the reusable workflow at the exact release tag \`@${PIN_TAG}\`, which fails if this repo's copy ever differs from the canonical one and then runs this repo's own copy on added lines, exactly as before. The hook file is unchanged and still scans added lines only, offline; the detection rules are the hardened ones (F1-F4, G1-G5)."
+    echo "Thin caller for the shared identifier guard: \`scripts/identifier-guard.py\` and \`.githooks/pre-commit\` become byte-identical copies of \`ccmenshealth/ci-recipes\` @ ${RECIPES_REV} (script blob \`${CANON_SHA:0:8}\`); \`.github/workflows/identifier-guard.yml\` now calls the reusable workflow at the exact release tag \`@${PIN_TAG}\`, which fails if this repo's copy ever differs from the canonical one and then runs this repo's own copy on added lines, exactly as before. The hook file is unchanged and still scans added lines only, offline; it applies the current detection rules."
     echo
-    echo "Plan: \`vcmc-notes/docs/plans/F_2026-10-17_identifier-guard-hardening.plan.md\` (F1-F4, G1-G5). Hits are reported as file:line + pattern only."
+    echo "Hits are reported as file:line + pattern only."
     echo
     echo "## Full-scan delta on \`$default\` (whole files, informational: the hook and CI scan added lines only)"
     echo
