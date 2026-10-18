@@ -29,7 +29,7 @@ while [ $# -gt 0 ]; do
     *) [ -z "$NAME" ] || { echo "one name only" >&2; exit 2; }; NAME="$1"; shift ;;
   esac
 done
-[ -n "$NAME" ] && [ -n "$VIS" ] || { echo "usage: ./new-repo.sh <name> --private|--public [--dry-run]" >&2; exit 2; }
+if [ -z "$NAME" ] || [ -z "$VIS" ]; then echo "usage: ./new-repo.sh <name> --private|--public [--dry-run]" >&2; exit 2; fi
 [[ "$NAME" =~ ^[a-z0-9][a-z0-9-]{0,99}$ ]] || { echo "name must be lower-case letters, digits and dashes" >&2; exit 2; }
 
 run() { if [ "$DRY" = 1 ]; then printf '    would run:'; printf ' %q' "$@"; echo; else "$@"; fi; }
@@ -73,14 +73,18 @@ fi
 run gh api -X PUT "repos/$OWNER/$NAME/actions/permissions/workflow" -f default_workflow_permissions=read \
   -F can_approve_pull_request_reviews=false
 
+runner_note=" PUBLIC repo: never a self-hosted runner."; secrets_note=" PUBLIC repo: none, ever."
+if [ "$VIS" = private ]; then
+  runner_note=" To use your own Linux runner, pass runs-on to the guard caller and set runs-on in your jobs."; secrets_note=""
+fi
 cat <<EOF
 
 === Still to do by the owner
 1. Clone it and enable the hook once per clone: git config core.hooksPath .githooks
 2. Fill in README.md (what it is, run, deploy), CLAUDE.md (build and test gates), docs/architecture.md.
-3. Secrets and variables: add only what a deploy needs (gh secret set / gh variable set).$([ "$VIS" = public ] && echo " PUBLIC repo: none, ever.")
+3. Secrets and variables: add only what a deploy needs (gh secret set / gh variable set).${secrets_note}
 4. CodeRabbit: add the repo to the CodeRabbit GitHub app's repository list if it should review PRs.
-5. CI runner: jobs run on ubuntu-latest.$([ "$VIS" = private ] && echo " To use your own Linux runner, pass runs-on to the guard caller and set runs-on in your jobs." || echo " PUBLIC repo: never a self-hosted runner.")
+5. CI runner: jobs run on ubuntu-latest.${runner_note}
 6. Memory: start ~/.claude/projects/<repo-slug>/memory/MEMORY.md for status and hand-overs (never in the repo).
 EOF
 [ "$DRY" = 1 ] && echo "(dry run: nothing created; tree left at $tree)"

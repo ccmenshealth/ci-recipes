@@ -59,7 +59,7 @@ RECIPES_REV="$(git -C "$HERE" rev-parse --short HEAD)"
 # full_scan <script> <clone>: every tracked regular file (no symlinks, no submodule gitlinks) through the guard in --files
 # mode; prints "path:line pattern" lines sorted.
 full_scan() {
-  ( cd "$2" && git ls-files -z | while IFS= read -r -d '' f; do [ -f "$f" ] && [ ! -L "$f" ] && printf '%s\0' "$f"; done \
+  ( cd "$2" && git ls-files -z | while IFS= read -r -d '' f; do if [ -f "$f" ] && [ ! -L "$f" ]; then printf '%s\0' "$f"; fi; done \
       | xargs -0 python3 "$1" --files 2>/dev/null || true ) | { grep '^  ' || true; } | sed 's/^  //' | sort
 }
 
@@ -84,7 +84,8 @@ for repo in "${REPOS[@]}"; do
 
   git -C "$clone" checkout -q -b "$BRANCH"
   if [ "$STANDARD" = 1 ]; then
-    pub=0; [ "$visibility" = public ] && pub=1
+    pub=0; pub_word=false
+    if [ "$visibility" = public ]; then pub=1; pub_word=true; fi
     apply_standard "$clone" "$pub" || { echo "    skipped"; continue; }
     git -C "$clone" add CLAUDE.md .github/PULL_REQUEST_TEMPLATE.md .repo-standard.json
   else
@@ -99,7 +100,7 @@ for repo in "${REPOS[@]}"; do
   body="$WORKDIR/$repo.body.md"
   {
     if [ "$STANDARD" = 1 ]; then
-      echo "Adopts the ccmenshealth repo standard (\`STANDARD.md\` in \`ccmenshealth/ci-recipes\` @ ${RECIPES_REV}): \`.github/PULL_REQUEST_TEMPLATE.md\` with the CI-cost line, \`.repo-standard.json\` (public: $([ "${pub:-0}" = 1 ] && echo true || echo false)), and the guard caller with \`standard: true\`, which runs \`repo-standard/check.py\` after the identifier scan in the same job."
+      echo "Adopts the ccmenshealth repo standard (\`STANDARD.md\` in \`ccmenshealth/ci-recipes\` @ ${RECIPES_REV}): \`.github/PULL_REQUEST_TEMPLATE.md\` with the CI-cost line, \`.repo-standard.json\` (public: ${pub_word}), and the guard caller with \`standard: true\`, which runs \`repo-standard/check.py\` after the identifier scan in the same job."
       echo
       echo "## Repo-standard check on this branch (exit $std_rc)"
       echo
