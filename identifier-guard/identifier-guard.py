@@ -15,6 +15,8 @@ impossible NANP number (area code or exchange starting 0/1), the practice's own 
 published toll-free number, the 4711/471
 synthetic number block, CCM-471NN, the 999-prefixed sentinel record numbers, example.com, or the words synthetic/fixture/
 placeholder/sentinel) or sits in a fixture path (test/fixture/mock directories, *.test.* / *.spec.* files, files named *fixtures.*, Sources/AgentChecks).
+Dependency lockfiles (composer.lock, package-lock.json, yarn.lock, pnpm-lock.yaml, Cargo.lock, Package.resolved) are not
+scanned: machine-written, never our data.
 Labelled DOBs: 1900-01-01 and 1970-01-01 are documented placeholders; years before 1900 or after this year are
 impossible; years 2020 to this year count only in value position (`DOB: 20xx-mm-dd`, `"dob": "..."`), not after prose
 (so `dob: new Date("20xx-mm-dd")` is not flagged either: letters sit between label and date).
@@ -52,6 +54,7 @@ PATTERNS = {   # name -> list of regexes; each match is judged on its own text
 LINE_MARKER = re.compile(r"(?i)\b(?:synthetic|fixture|placeholder|sentinel)\b")   # explicit, documented opt-out words only
 SYNTH_VALUE = re.compile(r"\b(?:ROE|DOE|POE|BLOGGS|MOCKLEY|STUBBS|FAKEMAN)\b|555[-. ]?01\d\d|55501\d\d|\b4711\d*\b|\b0*999\d{5,7}\b|(?i:CCM[-\s]?)?\b471\d{2}\b|(?i:CCM[-\s]?)(?:0000\d|12345|99999)\b")
 PLACEHOLDER_DOB = re.compile(r"(?i)^(?:(?:1900|1970)[-/.]0?1[-/.]0?1|0?1[-/.]0?1[-/.](?:1900|1970)|jan[a-z]*\.?[\s-]+0?1,?[\s-]+(?:1900|1970)|0?1[\s-]+jan[a-z]*\.?,?[\s-]+(?:1900|1970))$")
+LOCKFILE = re.compile(r"(^|/)(?:composer\.lock|package-lock\.json|yarn\.lock|pnpm-lock\.yaml|Cargo\.lock|Package\.resolved)$")   # machine-written, never our data
 FIXTURE_PATH = re.compile(r"(?i)(^|/)(tests?|__tests__|fixtures?|__fixtures__|__mocks__|mocks?|e2e|replay|worlds?|AgentChecks)(/|$)|\.(test|spec)\.[a-z]+$|(^|/)[^/]*fixtures?\.[^/]+$")
 RECENT_BIRTH_YEAR = 2020     # 2020..this year: a child's DOB; flagged only in value position (no words between label and date)
 MAX_LINE = 2000              # --files mode: longer lines are minified bundles, not prose
@@ -113,7 +116,7 @@ def synthetic(name, m):
 
 
 def check_line(path, lineno, text, findings):
-    if LINE_MARKER.search(text):
+    if LOCKFILE.search(path) or LINE_MARKER.search(text):
         return
     fixture = bool(FIXTURE_PATH.search(path))
     for name, rxs in PATTERNS.items():
