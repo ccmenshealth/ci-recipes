@@ -389,7 +389,7 @@ phase_azure_secrets() {
 
 phase_swa_token() {
   local secret="${1:-}" swa="${2:-}" rg="${3:-}"
-  [ -n "$secret" ] && [ -n "$swa" ] && [ -n "$rg" ] || die "usage: $0 swa-token $REPO <secret name> <static web app> <resource group>"
+  if [ -z "$secret" ] || [ -z "$swa" ] || [ -z "$rg" ]; then die "usage: $0 swa-token $REPO <secret name> <static web app> <resource group>"; fi
   repo_exists "$NEW" || die "$NEW does not exist; run create first"
   az staticwebapp secrets list -n "$swa" -g "$rg" --query properties.apiKey -o tsv | tr -d '\n' | set_secret "$secret"
   echo "org secrets now: $(gh api --paginate "repos/$NEW/actions/secrets" --jq '.secrets[].name' | paste -sd, -)"
