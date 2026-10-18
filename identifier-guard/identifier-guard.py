@@ -83,7 +83,7 @@ def code_number(m):
     before, after = m.string[:m.start("id")], m.string[m.end("id"):]
     if re.search(r"[-.]$", before) or re.search(r"\b[A-Z]{2},?\s+$", before):
         return False
-    if re.search(r"(?<![\d.\-])\d{7,14}(?!\d)|\b\d{1,2}/\d{1,2}/\d{2,4}\b", after[:80]):
+    if re.search(r"(?<![\d.])\d{7,14}(?!\d)|\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b|\b\d{4}-\d{1,2}-\d{1,2}\b", after[:80]):
         return False
     return re.match(r"-\d(?!\d)", after) is not None or re.match(r"[-.]\d", after) is None
 

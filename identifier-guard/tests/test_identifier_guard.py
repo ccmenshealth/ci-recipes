@@ -332,6 +332,9 @@ class NameNextToACode(unittest.TestCase):
         self.assertEqual(patterns(SRC, "%s %s seen 03/14/%d" % (NAME, CPT, ADULT)), ["name_near_id"])
         self.assertEqual(patterns(SRC, "%s %s then %s" % (NAME, CPT, d("2", 9))), ["name_near_id"])
         self.assertEqual(patterns(SRC, "%s %s acct %s" % (NAME, LOINC, d("2", 8))), ["name_near_id"])
+        self.assertEqual(patterns(SRC, "%s %s acct-%s" % (NAME, CPT, d("2", 8))), ["name_near_id"])
+        self.assertEqual(patterns(SRC, "%s %s dos %d-03-14" % (NAME, CPT, ADULT)), ["name_near_id"])
+        self.assertEqual(patterns(SRC, "%s %s dos 03-14-%d" % (NAME, CPT, ADULT)), ["name_near_id"])
 
 
 class FailureMessage(unittest.TestCase):
