@@ -1,7 +1,7 @@
 # ci-recipes
 
-Shared CI recipes for ccmenshealth repositories. This repo is public and holds nothing private: no secrets, no
-self-hosted runner, no dependency on a private repo.
+Shared CI recipes for ccmenshealth repositories. This repo holds nothing private: no secrets, no self-hosted runner,
+no dependency on a private repo.
 
 ## identifier-guard
 
@@ -56,8 +56,7 @@ existing repo, one PR each. Tests: `python3 -m unittest discover -s repo-standar
 
 Tags: callers pin an exact release tag (`v1.N`); there is no moving tag, so no tag is ever force-pushed. Every merge
 that callers should pick up gets the next `v1.N`, and `sync.sh` moves each repo to it in its own PR; a change to the
-reusable workflow's inputs that existing callers cannot take as is starts `v2.0`. The old moving `v1` tag stays at
-`67e3680` only until the last repo pins an exact tag, then it is deleted. All tags are lightweight (no `-a`), so
+reusable workflow's inputs that existing callers cannot take as is starts `v2.0`. All tags are lightweight (no `-a`), so
 `job.workflow_sha` in the reusable workflow is the commit.
 
 ### Files
