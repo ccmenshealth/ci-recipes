@@ -559,7 +559,8 @@ class PersonRecordPaths(Base):
                     "minutes/board.md", "docs/transcripts/call.md", "docs/2026-01-01-meeting.md",
                     "docs/weekly-minutes.md", "docs/call-transcript.txt", "docs/audit-dump.md", "docs/1-on-1.md",
                     "docs/one-on-one notes.md", "docs/standup.md", "docs/retro.md", "docs/retrospective.md",
-                    "recordings/call.vtt", "src/captions/talk.srt", "MEETINGS.md"]:
+                    "recordings/call.vtt", "src/captions/talk.srt", "MEETINGS.md", "docs/meetings/2026/a.md",
+                    "docs/meeting_notes/a.md"]:
             with self.subTest(rel=rel):
                 repo = Repo(); self.addCleanup(repo.close); self.repo = repo
                 repo.write(rel)

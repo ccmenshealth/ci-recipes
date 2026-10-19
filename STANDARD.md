@@ -87,20 +87,22 @@ person. The guard checks these shapes on added lines, by rule name (the name it 
 |---|---|---|
 | `name_amount` | on | a `First Last` name (first word from the guard's given-name shape list, last word not a persona surname or a heading word) within 60 characters of money (`$` amount, `1,234.56`, a 4+ digit number that is not a date) or of paid / invoice / payroll / salary / wage / pay / payout / owe / bonus / refund / reimburse; or a lone given name right before a `$` amount, or `$amount to/for/from Name` |
 | `pay_near_person` | on | `his/her [gross/net] pay/wages/salary/bonus` near a `$` amount, `she/he takes home/earns … $amount`, `Name's pay … $amount` |
-| `partial_id` | on, outside fixture paths | `last 4` / `ending in` / `ends with` followed by four digits, or a masked `****1234`, other than the allowed last-4 values |
+| `partial_id` | on, outside fixture paths | `last 4` / `ending in` / `ends with` followed by four digits, or a masked `****4711` / `•••• 4711` / `XXXX-XXXX-4711` / `•••-4711`, other than the allowed last-4 values |
 | `fixture_partial_id` | opt-in | the same in fixture paths |
 | `fixture_name` | opt-in | in fixture and mockup paths, a `lastName` / `surname` / `familyName` / `patientName` / `fullName` / `displayName` / `legalName` value without a persona surname |
-| `fixture_dob` | opt-in | in fixture paths, a labelled birth date other than the placeholders (fixture paths are otherwise exempt from the DOB check) |
+| `fixture_dob` | opt-in | in fixture paths (mockups already get the default DOB check), a labelled birth date other than the placeholders (fixture paths are otherwise exempt from the DOB check) |
 | `fixture_address` | opt-in | in fixture and mockup paths, `City, ST 12345` or a `zip` / `postalCode` value outside the allowed ZIPs |
 | `doc_uuid` | opt-in | a UUID in a doc file (`docs/`, `.md`, `.txt`, `.rst`, `.html`, …): operation and resource ids from live systems |
-| `email_domain` | opt-in | in fixture, mockup and doc paths, any e-mail address outside the reserved domains |
+| `email_domain` | opt-in | in fixture, mockup and doc paths, any e-mail address outside the reserved domains (`example.com/.org/.net`, `.example`, `.test`, `.invalid`, `localhost`); `noreply@` / `git@`, `*.noreply.github.com` and version specifiers (`pkg@1.2.3`) pass |
 
-A repo switches opt-in rules on with `guard_rules` in `.repo-standard.json`; the hook and CI read the same key. The
+A repo switches opt-in rules on with `guard_rules` in `.repo-standard.json` at the repo root; the hook and CI read the
+same key, from the working tree (so a PR that drops a rule is judged without it: review the config change). The
 given-name list is a shape list (common given names that are not also ordinary English words), not a list of people,
 and stays ASCII-sorted. *Why: the shapes an independent read found in repos that passed every other scan.*
 
 The guard does not see a surname inside free text (a memo string), a name on a line without an amount, a single
-surname next to an amount, or figures in a comment that names nobody. That is why the independent certification read
+surname next to an amount, figures in a comment that names nobody, a name in `Last, First` order or in capitals next to
+an amount, or names with an inner capital, an apostrophe or an accent (`McX`, `O'X`, letters outside A-Z). That is why the independent certification read
 stays the gate before any repo moves, whatever the guard says.
 
 ## Pull requests
@@ -151,7 +153,7 @@ per violation: rule, path, fix. Paths only, never file content. Exit 0 clean, 1 
 |---|---|
 | `narrative-name` | a document file (`.md`, `.txt`, `.rst`, `.html`, `.pdf`, `.docx`, …, or no extension) is named like narrative: contains hand-off/handoff, ledger, current-state, resume-prompt or startup-prompt; a history of the work (`session-history`, `change-history`, `HISTORY.md`); or the whole name is progress, status, todo(s), bookmark(s) |
 | `narrative-dir` | any file under `docs/` sits in a directory named progress, todo(s), audit(s), archive(d), history/histories, handoff(s), ledger(s), sessions or status; or a top-level directory is named archive(d), history/histories or handoff(s) |
-| `person-record-path` | a document file sits in a directory named meetings, meeting-notes, minutes or transcripts, or its name has the whole word meeting(s), minutes, transcript(s), audit-dump, 1-on-1 / one-on-one, standup, retro or retrospective; or any `.vtt` / `.srt` file |
+| `person-record-path` | a document file sits in a directory named meeting(s), meeting-notes / meeting_notes, minutes or transcripts, or its name has the whole word meeting(s), minutes, transcript(s), audit-dump, 1-on-1 / one-on-one, standup, retro or retrospective; or any `.vtt` / `.srt` file |
 | `binary-path` | an image (`png jpg jpeg gif webp bmp tif tiff heic heif avif svg ico icns`) or binary document (`pdf doc docx xls xlsx ppt pptx odt ods odp`) is under `docs/` or outside the allowed paths |
 | `secret-shape` | a tracked text file (no NUL byte, at most 2 MB) has a signed URL (`sig=`, also as `\u0026sig=` or `%26sig%3D`), SAS token, storage `AccountKey=`, `SharedAccessSignature`, private-key or PGP private-key block with a body, GitHub, AWS or Slack token, or a long bearer token; reported as path:line and the shape's name, never the text. Placeholders pass; Azure client secrets have no shape and are not detected |
 | `required-file` | `README.md` or `CLAUDE.md` is missing |

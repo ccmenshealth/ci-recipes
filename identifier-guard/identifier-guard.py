@@ -151,7 +151,7 @@ NAME_GAP = re.compile(r"\s+(?:[A-Z]\.?\s+)?")                       # one space 
 CURRENCY = r"\$\s?\d[\d,]*(?:\.\d{2})?"
 MONEY = re.compile(CURRENCY + r"|\b\d{1,3}(?:,\d{3})+(?:\.\d{2})?\b|\b\d+\.\d{2}\b|(?<![\d/.:-])\d{4,}(?![\d/:-]|\.\d)"
                    r"|(?i:\b(?:paid|invoice[ds]?|payroll|salary|salaries|wages?|pay|payout|owes?|owed|bonus|refund(?:ed)?|reimburse\w*)\b)")
-DATEISH = re.compile(r"\b\d{4}-\d{1,2}-\d{1,2}\b|\b\d{1,2}/\d{1,2}/\d{2,4}\b|(?i:\b" + MONTH + r"\s+\d{1,2},?\s+\d{4})|\b(?:19|20)\d\d\b")
+DATEISH = re.compile(r"\b\d{4}-\d{1,2}-\d{1,2}\b|\b\d{1,2}/\d{1,2}/\d{2,4}\b|(?i:\b" + MONTH + r"\s+\d{1,2},?\s+\d{4})|(?<![$\d,.])\b(?:19|20)\d\d\b(?!\.\d)")   # a bare year, not $2000 or 1999.00
 PLACE_PREFIX = re.compile(r"\b(?:San|Santa|Saint|St\.?|Los|Las|El|La|Del|Fort|Port|Mount|Mt\.?|Lake)\s+$")   # San Luis Obispo
 NAME_NEAR = 60                                # chars either side of a First Last name searched for money context
 LONE_NAME_MONEY = re.compile(r"\b([A-Z][a-z]+)\b(?!\s+[A-Z])[^\n$]{0,25}?" + CURRENCY + r"|" + CURRENCY + r"[^\n]{0,15}?\b(?:to|for|from)\s+([A-Z][a-z]+)\b")
@@ -161,7 +161,8 @@ PRONOUN_PAY = re.compile(r"(?i:\b(?:his|her)\s+" + PAY_WORD + r"\b)[^\n]{0,50}?"
                          r"|(?i:\b(?:she|he)\s+(?:takes\s+home|earns|makes|is\s+paid|was\s+paid))[^\n]{0,30}?" + CURRENCY)
 POSSESSIVE_PAY = re.compile(r"\b([A-Z][a-z]+)(?:'s|\u2019s|&apos;s)\s+(?i:" + PAY_WORD + r")\b[^\n]{0,50}?" + CURRENCY)
 PARTIAL_ID = re.compile(r"(?i)(?:\blast[\s_-]*(?:4|four)(?:[\s_-]*digits?)?|\bending(?:[\s_-]+in)?|\bends[\s_-]+(?:in|with))"
-                        r"[\s:=\"'`#(-]{0,6}(\d{4})(?![\d/-])|(?<![\w*\u2022])(?:[*\u2022]{4,}|[xX]{4,}|\u2022{3}-)(\d{4})(?!\d)")
+                        r"[\s:=\"'`#(-]{0,6}(\d{4})(?![\d/-]|\.\d)"
+                        r"|(?<![\w*\u2022])(?:(?:[*\u2022]{4,}|[xX]{4,})[\s-]?){1,3}(\d{4})(?!\d)|(?<![\w*\u2022])\u2022{3}-(\d{4})(?!\d)")
 ALLOWED_LAST4 = frozenset({"4711", "0000", "4242", "1111"})   # the 4711 block, all zeros, the standard test-card endings
 NAME_KEY = re.compile(r"""(?i)(?<![a-z])["']?(?:last_?name|lname|sur_?name|family_?name|patient_?name|full_?name|display_?name"""
                       r"""|legal_?name|name_?last)["']?\s*[:=]\s*["']([^"'\n]{2,60})["']""")
@@ -191,7 +192,7 @@ def name_amount(text):
                 break
         while len(run) > 1 and run[-1].group(0) in NAME_STOPWORDS:
             run.pop()
-        if len(run) < 2 or PERSONA_WORD.search(run[-1].group(0)) or PLACE_PREFIX.search(text, 0, run[0].start()):
+        if len(run) < 2 or PERSONA_WORD.search(run[-1].group(0)) or PLACE_PREFIX.search(text, max(0, run[0].start() - 12), run[0].start()):
             continue
         before = DATEISH.sub(" ", text[max(0, run[0].start() - NAME_NEAR):run[0].start()])
         after = DATEISH.sub(" ", text[run[-1].end():run[-1].end() + NAME_NEAR])
@@ -205,7 +206,7 @@ def pay_near_person(text):
 
 
 def partial_id(text):
-    return any((m.group(1) or m.group(2)) not in ALLOWED_LAST4 for m in PARTIAL_ID.finditer(text))
+    return any((m.group(1) or m.group(2) or m.group(3)) not in ALLOWED_LAST4 for m in PARTIAL_ID.finditer(text))
 
 
 def fixture_name(text):
@@ -235,14 +236,15 @@ def email_domain(text):
     return False
 
 
-# name -> (check, scope); scope is "all", "not_fixture", "fixture" (fixture and mockup paths), "doc", "fixture_or_doc".
+# name -> (check, scope); scope is "all", "not_fixture", "fixture" (fixture and mockup paths), "fixture_only" (fixture paths;
+# mockups already get the default dob and partial_id checks), "doc", "fixture_or_doc".
 PERSON_RULES = {
     "name_amount": (name_amount, "all"),
     "pay_near_person": (pay_near_person, "all"),
     "partial_id": (partial_id, "not_fixture"),
     "fixture_name": (fixture_name, "fixture"),
-    "fixture_dob": (fixture_dob, "fixture"),
-    "fixture_partial_id": (partial_id, "fixture"),
+    "fixture_dob": (fixture_dob, "fixture_only"),
+    "fixture_partial_id": (partial_id, "fixture_only"),
     "doc_uuid": (doc_uuid, "doc"),
     "fixture_address": (fixture_address, "fixture"),
     "email_domain": (email_domain, "fixture_or_doc"),
@@ -251,7 +253,11 @@ PERSON_RULES = {
 
 def load_opt_in():
     """guard_rules from .repo-standard.json at the repo root (git toplevel of the current directory); none outside a repo."""
-    r = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+    try:
+        r = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+    except OSError as e:                          # fail CLOSED: without git the opt-in rules cannot be known
+        print(f"identifier guard: cannot run git ({e.strerror}); refusing to pass")
+        sys.exit(2)
     if r.returncode != 0:
         return frozenset()
     path = os.path.join(r.stdout.strip(), CONFIG)
@@ -329,7 +335,8 @@ def check_line(path, lineno, text, findings, opt_in=frozenset()):
             findings.append((path, lineno, name))
     fixture_like = fixture or bool(MOCKUP_PATH.search(path))
     doc = bool(DOC_FILE.search(path))
-    in_scope = {"all": True, "not_fixture": not fixture, "fixture": fixture_like, "doc": doc, "fixture_or_doc": fixture_like or doc}
+    in_scope = {"all": True, "not_fixture": not fixture, "fixture": fixture_like, "fixture_only": fixture, "doc": doc,
+                "fixture_or_doc": fixture_like or doc}
     for name, (rule, scope) in PERSON_RULES.items():
         if (name in OPT_IN_RULES and name not in opt_in) or not in_scope[scope]:
             continue
