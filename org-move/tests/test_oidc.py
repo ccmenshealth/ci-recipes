@@ -84,9 +84,10 @@ class OidcPhase(unittest.TestCase):
     def subject_setting(self, setting):
         write(os.path.join(self.td, "sub.json"), json.dumps(setting))
 
-    def run_phase(self, phase="oidc", plan_only=False):
+    def run_phase(self, phase="oidc", plan_only=False, src_branch=None):
         env = dict(os.environ, PATH=self.bin + os.pathsep + os.environ["PATH"], STUB=self.td, ORG="org1",
                    OLD_OWNER="old1", WORK=os.path.join(self.td, "work"), EVIDENCE=os.path.join(self.td, "ev"))
+        if src_branch: env["SRC_BRANCH"] = src_branch
         if plan_only: env["PLAN_ONLY"] = "1"
         return subprocess.run(["bash", MOVE, phase, "repo1", "app1"], env=env, capture_output=True, text=True)
 
@@ -109,7 +110,7 @@ class OidcPhase(unittest.TestCase):
         self.run_phase()
         names = [c["name"] for c in json.loads(read(os.path.join(self.td, "creds.json")))]
         self.assertEqual(len(names), len(set(names)))
-        self.assertEqual(len(names), 3)
+        self.assertIn("deploy-org1-immutable", names)
 
     def test_plan_only_lists_the_immutable_twin_and_creates_nothing(self):
         self.immutable_on()
@@ -167,6 +168,34 @@ class OidcPhase(unittest.TestCase):
         r = self.run_phase(phase="azure-secrets")
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("no twin credential", r.stdout + r.stderr)
+
+    def test_repo_moved_before_the_fix_gets_only_the_immutable_twin(self):
+        self.immutable_on()
+        self.creds([cred("deploy", "repo:old1/repo1:ref:refs/heads/main"), cred("deploy-org1", PLAIN)])
+        r = self.run_phase()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(self.created(), [IMMUTABLE])
+
+    def test_every_subject_suffix_is_kept_and_the_source_branch_maps_to_main(self):
+        self.immutable_on()
+        self.creds([cred("a", "repo:old1/repo1:ref:refs/heads/master"), cred("b", "repo:old1/repo1:pull_request"),
+                    cred("c", "repo:old1/repo1:environment:prod")])
+        r = self.run_phase(src_branch="master")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        want = []
+        for rest in ("ref:refs/heads/main", "pull_request", "environment:prod"):
+            want += ["repo:org1/repo1:" + rest, "repo:org1@1000/repo1@2000:" + rest]
+        self.assertEqual(sorted(self.created()), sorted(want))
+
+    def test_long_names_are_cut_to_the_azure_limit(self):
+        self.immutable_on()
+        self.creds([cred("x" * 130, "repo:old1/repo1:ref:refs/heads/main")])
+        r = self.run_phase()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        names = [c["name"] for c in json.loads(read(os.path.join(self.td, "creds.json")))][1:]
+        self.assertEqual(sorted(len(n) for n in names), [120, 120])
+        self.assertEqual(len(set(names)), 2)
+        self.assertTrue(any(n.endswith("-org1-immutable") for n in names))
 
 
 if __name__ == "__main__":
