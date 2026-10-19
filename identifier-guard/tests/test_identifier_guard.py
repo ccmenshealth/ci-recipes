@@ -424,6 +424,12 @@ class NameNearAmount(unittest.TestCase):
         for amount in ("$" + "2000", "$" + "1999.00", "$" + "2050.00", "2000" + ".00"):
             self.assertEqual(patterns(SRC, FULL + " " + amount), ["name_amount"], amount)
 
+    def test_money_counts_within_60_characters_only(self):
+        self.assertEqual(patterns(SRC, FULL + " " + "q" * 50 + " " + AMT), ["name_amount"])
+        self.assertEqual(patterns(SRC, FULL + " " + "q" * 70 + " " + AMT), [])
+        self.assertEqual(patterns(SRC, AMT + " " + "q" * 50 + " " + FULL), ["name_amount"])
+        self.assertEqual(patterns(SRC, AMT + " " + "q" * 70 + " " + FULL), [])
+
     def test_a_date_before_the_name_is_not_money(self):
         self.assertEqual(patterns(SRC, "on March 14, %d " % ADULT + FULL + " reviewed it"), [])
 
@@ -473,8 +479,16 @@ class PartialId(unittest.TestCase):
 
     def test_allowed_endings_dates_and_longer_numbers_are_not(self):
         for line in ("ending in 4711", "last4: '0000'", "last 4: 4242", "ending 1111", "ending %d-03-14" % ADULT,
-                     "last 4 of " + d("2", 5), "/** " + FOUR + " note */", "**" + FOUR + "**", "ending " + FOUR + ".56"):
+                     "last 4 of " + d("2", 5), "/** " + FOUR + " note */", "**" + FOUR + "**", "ending " + FOUR + ".56",
+                     "•••-4242"):
             self.assertEqual(patterns(SRC, line), [], line)
+
+    def test_long_mask_runs_stay_linear(self):
+        import time
+        for ch in ("*", "x", "•"):
+            start = time.monotonic()
+            patterns(SRC, ch * 1000)
+            self.assertLess(time.monotonic() - start, 1.0, ch)
 
     def test_fixture_paths_only_when_opted_in(self):
         line = "{ last4: '" + FOUR + "' }"
@@ -535,6 +549,7 @@ class OptInDocUuid(unittest.TestCase):
         self.assertEqual(patterns(DOC, line), [])
         self.assertEqual(opt_in_patterns(DOC, line, "doc_uuid"), ["doc_uuid"])
         self.assertEqual(opt_in_patterns("NOTES.md", line, "doc_uuid"), ["doc_uuid"])
+        self.assertEqual(opt_in_patterns("docs/ops/ids.json", line, "doc_uuid"), ["doc_uuid"])   # anything under docs/
 
     def test_code_and_nil_uuids_pass(self):
         self.assertEqual(opt_in_patterns(SRC, "const id = '" + UUID + "'", "doc_uuid"), [])

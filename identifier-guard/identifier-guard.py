@@ -162,7 +162,7 @@ PRONOUN_PAY = re.compile(r"(?i:\b(?:his|her)\s+" + PAY_WORD + r"\b)[^\n]{0,50}?"
 POSSESSIVE_PAY = re.compile(r"\b([A-Z][a-z]+)(?:'s|\u2019s|&apos;s)\s+(?i:" + PAY_WORD + r")\b[^\n]{0,50}?" + CURRENCY)
 PARTIAL_ID = re.compile(r"(?i)(?:\blast[\s_-]*(?:4|four)(?:[\s_-]*digits?)?|\bending(?:[\s_-]+in)?|\bends[\s_-]+(?:in|with))"
                         r"[\s:=\"'`#(-]{0,6}(\d{4})(?![\d/-]|\.\d)"
-                        r"|(?<![\w*\u2022])(?:(?:[*\u2022]{4,}|[xX]{4,})[\s-]?){1,3}(\d{4})(?!\d)|(?<![\w*\u2022])\u2022{3}-(\d{4})(?!\d)")
+                        r"|(?<![\w*\u2022])(?:[*\u2022]{4,}|[xX]{4,})[\s-]?(\d{4})(?!\d)|(?<![\w*\u2022])\u2022{3}-(\d{4})(?!\d)")
 ALLOWED_LAST4 = frozenset({"4711", "0000", "4242", "1111"})   # the 4711 block, all zeros, the standard test-card endings
 NAME_KEY = re.compile(r"""(?i)(?<![a-z])["']?(?:last_?name|lname|sur_?name|family_?name|patient_?name|full_?name|display_?name"""
                       r"""|legal_?name|name_?last)["']?\s*[:=]\s*["']([^"'\n]{2,60})["']""")
