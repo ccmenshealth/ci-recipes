@@ -9,8 +9,9 @@
 #   move-repo.sh certify   <repo>   guard (whole files), phrase sweep, binary + standard check on the prepared tree
 #   move-repo.sh create    <repo>   empty private repo in the org (set its secrets BEFORE push: main may deploy)
 #   move-repo.sh oidc      <repo> <app>   add a twin Azure federated credential (subject repo:ORG/<repo>:...) for every
-#                                         credential of app registration <app> whose subject is repo:OLD_OWNER/<repo>:...
-#                                         (PLAN_ONLY=1 prints the plan and creates nothing)
+#                                         credential of app registration <app> whose subject is repo:OLD_OWNER/<repo>:...;
+#                                         when the org repo sends immutable OIDC subjects (repo:ORG@<id>/<repo>@<id>:...),
+#                                         a second twin with that subject too (PLAN_ONLY=1 prints the plan, creates nothing)
 #   move-repo.sh azure-secrets <repo> <app>   AZURE_CLIENT_ID (<app>'s appId), AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID
 #                                         from az, piped into gh secret set on the org repo (only names the personal repo has)
 #   move-repo.sh swa-token <repo> <secret> <static web app> <resource group>   deployment token from az into gh secret set
@@ -319,10 +320,10 @@ app_id() {
 # "check" fails unless every twin exists. The twin of repo:OLD:ref:refs/heads/SRC_BRANCH is repo:NEW:ref:refs/heads/main
 # (the org branch); other suffixes (pull_request, environment:...) are kept.
 oidc_twins() {
-  O="$OLD" N="$NEW" ORG="$ORG" B="$SRC_BRANCH" python3 -c '
+  O="$OLD" N="$NEW" ORG="$ORG" B="$SRC_BRANCH" IMM="$OIDC_IMMUTABLE_PREFIX" python3 -c '
 import json, os, sys
 mode = sys.argv[1]; creds = json.load(sys.stdin)
-o, n, org, b = (os.environ[k] for k in ("O", "N", "ORG", "B"))
+o, n, org, b, imm = (os.environ[k] for k in ("O", "N", "ORG", "B", "IMM"))
 have = {c["subject"] for c in creds}; names = {c["name"] for c in creds}
 old = [c for c in creds if c["subject"].startswith("repo:%s:" % o)]
 if not old: sys.exit("no federated credential with subject repo:%s:..." % o)
@@ -331,22 +332,51 @@ for i, c in enumerate(old):
     if c["issuer"] != "https://token.actions.githubusercontent.com": sys.exit("credential %s: unexpected issuer" % c["name"])
     rest = c["subject"][len("repo:%s:" % o):]
     if rest == "ref:refs/heads/%s" % b: rest = "ref:refs/heads/main"
-    subj = "repo:%s:%s" % (n, rest)
-    if subj in have: print("exists: %s" % subj); continue
-    missing.append(subj)
-    if mode == "plan":
-        name = (c["name"][:120 - len(org) - 1] + "-" + org)
-        if name in names: sys.exit("twin name %s already taken by another credential" % name)
-        names.add(name)
-        twin = {"name": name, "issuer": c["issuer"], "subject": subj, "audiences": c["audiences"],
-                "description": "%s, organization repository" % (c.get("description") or c["name"])}
-        json.dump(twin, open(os.path.join(sys.argv[2], "%02d.json" % i), "w")); print("create: %s (%s)" % (name, subj))
+    # The plain twin always; the immutable-subject twin when the org repo sends repo:ORG@<id>/<repo>@<id>:...
+    wanted = [("-" + org, "repo:%s:%s" % (n, rest), "organization repository")]
+    if imm: wanted.append(("-" + org + "-immutable", "%s:%s" % (imm, rest), "organization repository, immutable OIDC subject"))
+    for k, (suffix, subj, what) in enumerate(wanted):
+        if subj in have: print("exists: %s" % subj); continue
+        missing.append(subj)
+        if mode == "plan":
+            name = c["name"][:120 - len(suffix)] + suffix
+            if name in names: sys.exit("twin name %s already taken by another credential" % name)
+            names.add(name)
+            twin = {"name": name, "issuer": c["issuer"], "subject": subj, "audiences": c["audiences"],
+                    "description": "%s, %s" % (c.get("description") or c["name"], what)}
+            with open(os.path.join(sys.argv[2], "%02d-%d.json" % (i, k)), "w") as f: json.dump(twin, f)
+            print("create: %s (%s)" % (name, subj))
 if mode == "check" and missing: sys.exit("missing twin subjects: %s" % missing)
 ' "$@"
 }
 
+# The org repo's OIDC subject prefix when it sends immutable subjects (repo:ORG@<org id>/<repo>@<repo id>), else empty.
+# A custom subject template is not supported (its subjects cannot be derived from the personal ones).
+OIDC_IMMUTABLE_PREFIX=""
+oidc_subject_setting() {
+  if ! repo_exists "$NEW"; then
+    [ "${PLAN_ONLY:-}" = 1 ] || die "$NEW does not exist; run create first (its OIDC subject format decides the twins)"
+    echo "note: $NEW does not exist yet; plain twins only in this plan (the subject format is read after create)"
+    return 0
+  fi
+  local j; j="$(gh api "repos/$NEW/actions/oidc/customization/sub")" || die "reading the OIDC subject setting of $NEW failed"
+  OIDC_IMMUTABLE_PREFIX="$(printf '%s' "$j" | ORG="$ORG" R="$REPO" python3 -c '
+import json, os, re, sys
+d = json.load(sys.stdin)
+if not d.get("use_default", True): sys.exit("custom OIDC subject template on the org repo is not supported; twins need the default format")
+if not d.get("use_immutable_subject"): sys.exit(0)
+p = d.get("sub_claim_prefix") or ""
+if not re.fullmatch(r"repo:%s@[0-9]+/%s@[0-9]+" % (re.escape(os.environ["ORG"]), re.escape(os.environ["R"])), p):
+    sys.exit("unexpected immutable OIDC subject prefix for this repository")
+print(p)
+')" || die "OIDC subject setting check failed"
+  if [ -n "$OIDC_IMMUTABLE_PREFIX" ]; then echo "OIDC subject format of $NEW: immutable ($OIDC_IMMUTABLE_PREFIX)"
+  else echo "OIDC subject format of $NEW: plain"; fi
+}
+
 phase_oidc() {
   local app="${1:-}"; [ -n "$app" ] || die "usage: $0 oidc $REPO <app registration display name>"
+  oidc_subject_setting
   local id; id="$(app_id "$app")"
   local spec="$WORK/$REPO-oidc"; rm -rf "$spec"; mkdir -p "$spec"
   az ad app federated-credential list --id "$id" -o json | oidc_twins plan "$spec" || die "federated credential plan failed"
@@ -372,6 +402,7 @@ set_secret() {
 phase_azure_secrets() {
   local app="${1:-}"; [ -n "$app" ] || die "usage: $0 azure-secrets $REPO <app registration display name>"
   repo_exists "$NEW" || die "$NEW does not exist; run create first"
+  oidc_subject_setting
   local id; id="$(app_id "$app")"
   # The app must be the one oidc twinned for this repo: a wrong app would only fail at the first deploy.
   az ad app federated-credential list --id "$id" -o json | oidc_twins check >/dev/null \
