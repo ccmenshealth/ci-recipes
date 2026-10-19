@@ -6,7 +6,9 @@ no dependency on a private repo.
 ## identifier-guard
 
 `identifier-guard/identifier-guard.py` fails a commit or pull request whose added lines look like patient identifiers
-(MRN/FIN, CCM record numbers, DOB, SSN, US phone numbers, `LAST, FIRST` next to a number, personal e-mail). It prints
+(MRN/FIN, CCM record numbers, DOB, SSN, US phone numbers, `LAST, FIRST` next to a number, personal e-mail) or person
+data (a `First Last` name near money, pay tied to a person, last-4 fragments; more rules opt-in per repo, see
+STANDARD.md, Person data). It prints
 file, line and pattern only, never the matched text. Allowed test-data shapes, the only ones it exempts: ROE/DOE/POE
 personas, 555-01xx or area-code-555 phones (and any impossible NANP number), the 4711 number block, CCM-471NN,
 999-prefixed sentinel record numbers, the placeholder dates 1900-01-01 and 1970-01-01, example.com e-mail, and the words
@@ -58,6 +60,8 @@ Tags: callers pin an exact release tag (`v1.N`); there is no moving tag, so no t
 that callers should pick up gets the next `v1.N`, and `sync.sh` moves each repo to it in its own PR; a change to the
 reusable workflow's inputs that existing callers cannot take as is starts `v2.0`. All tags are lightweight (no `-a`), so
 `job.workflow_sha` in the reusable workflow is the commit.
+The personal and organization copies of ci-recipes carry the same guard bytes under the same tag from v1.8 on; v1.7
+(the composite action) exists only in the organization copy, so the personal copy goes from v1.6 to v1.8.
 
 ### Files
 

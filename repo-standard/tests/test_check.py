@@ -551,6 +551,58 @@ class Config(Base):
         self.assertError()
 
 
+class PersonRecordPaths(Base):
+    """Meeting notes, transcripts and audit dumps are records of people and events, never documentation of code."""
+
+    def test_flags_meeting_transcript_and_audit_dump_paths(self):
+        for rel in ["docs/meetings/README.md", "docs/meetings/2026-01-01-review.md", "notes/meeting-notes/a.txt",
+                    "minutes/board.md", "docs/transcripts/call.md", "docs/2026-01-01-meeting.md",
+                    "docs/weekly-minutes.md", "docs/call-transcript.txt", "docs/audit-dump.md", "docs/1-on-1.md",
+                    "docs/one-on-one notes.md", "docs/standup.md", "docs/retro.md", "docs/retrospective.md",
+                    "recordings/call.vtt", "src/captions/talk.srt", "MEETINGS.md", "docs/meetings/2026/a.md",
+                    "docs/meeting_notes/a.md"]:
+            with self.subTest(rel=rel):
+                repo = Repo(); self.addCleanup(repo.close); self.repo = repo
+                repo.write(rel)
+                self.assertViolation("person-record-path", rel)
+
+    def test_source_files_and_other_words_pass(self):
+        for rel in ["src/transcript.ts", "src/meetings/schedule.py", "src/lib/minutesToHours.ts",
+                    "docs/runbooks/zoom-links-setup.md", "docs/plans/retrofit.md",
+                    "docs/auditing.md", "src/transcriptsApi.test.ts"]:
+            self.repo.write(rel)
+        self.assertClean()
+
+    def test_allow_entry_exempts_one_exact_path(self):
+        self.repo.write("docs/plans/regenerate-from-transcript.md").write("docs/meetings/a.md")
+        self.repo.config({"allow": ["docs/plans/regenerate-from-transcript.md"]})
+        out = self.assertViolation("person-record-path", "docs/meetings/a.md")
+        self.assertNotIn("regenerate-from-transcript", out)
+
+
+class GuardRules(Base):
+    """guard_rules in .repo-standard.json switches on the guard's opt-in rules; check.py validates the names."""
+
+    def test_valid_names_pass(self):
+        self.repo.config({"guard_rules": ["fixture_name", "fixture_dob", "fixture_partial_id", "doc_uuid",
+                                          "fixture_address", "email_domain"]})
+        self.assertClean()
+
+    def test_unknown_name_and_wrong_type_are_errors(self):
+        for bad in [{"guard_rules": ["fixture_dobb"]}, {"guard_rules": "fixture_dob"}, {"guard_rules": [1]}]:
+            with self.subTest(bad=bad):
+                self.repo.config(bad)
+                self.assertError()
+
+    def test_check_and_guard_agree_on_the_names(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("check_mod", CHECK)
+        check_mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(check_mod)
+        spec = importlib.util.spec_from_file_location("guard_mod", GUARD)
+        guard_mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(guard_mod)
+        self.assertEqual(set(check_mod.GUARD_RULES), set(guard_mod.OPT_IN_RULES))
+
+
 class Template(unittest.TestCase):
     """template/ is a conforming repo once the guard is copied in, and its copies cannot drift."""
 

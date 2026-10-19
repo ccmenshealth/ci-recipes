@@ -31,6 +31,13 @@ NARRATIVE_DIRS = {"progress", "todo", "todos", "audit", "audits", "archive", "ar
                   "handoff", "handoffs", "ledger", "ledgers", "sessions", "status"}
 # At the repo root only these: status/, todo/, progress/ at the root are usually feature directories.
 NARRATIVE_ROOT_DIRS = {"archive", "archived", "history", "histories", "handoff", "handoffs"}
+# Records of people and events, never documentation of code: meeting notes, minutes, transcripts, audit dumps.
+PERSON_RECORD_DIRS = {"meetings", "meeting", "meeting-notes", "meeting_notes", "minutes", "transcripts"}
+PERSON_RECORD_STEM = re.compile(r"(?:^|[-_ .])(?:meetings?|minutes|transcripts?|audit[-_ ]?dump|1[-_ ]?on[-_ ]?1|one[-_ ]on[-_ ]one"
+                                r"|standup|retro|retrospective)(?:$|[-_ .])", re.I)
+CAPTION_EXT = {".vtt", ".srt"}   # caption files are transcripts, wherever they sit
+# The guard's opt-in rule names (identifier-guard.py OPT_IN_RULES; a test keeps the two lists equal).
+GUARD_RULES = ("fixture_name", "fixture_dob", "fixture_partial_id", "doc_uuid", "fixture_address", "email_domain")
 # Images and binary documents: the guard cannot read either, so both live only in code-referenced asset paths.
 BINARY_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff", ".heic", ".heif", ".avif", ".svg",
               ".ico", ".icns", ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".odt", ".ods", ".odp"}
@@ -52,7 +59,7 @@ HOSTED_LABEL = re.compile(r"""\[?\s*['"]?ubuntu-[\w.]+['"]?\s*\]?""")  # Linux o
 REPO_REF = re.compile(r"""^\s*(?:-\s*)?(?:uses|repository):\s*['"]?([\w.-]+/[\w.-]+)""", re.M)
 # asset_paths entries that would allow a screenshot at the top level or under docs/ are refused.
 BROAD_PROBES = ["probe.png", "docs/probe.png", "docs/screenshots/probe.png", "some/dir/probe.png", "some/img/probe.png"]
-KEYS = {"version": int, "public": bool, "asset_paths": list, "allow": list}
+KEYS = {"version": int, "public": bool, "asset_paths": list, "allow": list, "guard_rules": list}
 NOT_PLACEHOLDER = r"(?!REDACTED(?![A-Za-z0-9%_+/-]))"  # REDACTED, and nothing glued to it
 # Secret shapes: reported as rule, path:line and shape name, never the matched text. `allow` never exempts them; a
 # placeholder (REDACTED, <key>, ${VAR}) is the only way through. Azure client secrets have no shape and are not detected.
@@ -150,6 +157,9 @@ def load_config(root, files):
             raise Error(f"{CONFIG}: asset_paths entry {pat!r}: images and binary documents under docs/ are never allowed")
         if any(glob_regex(pat).match(probe) for probe in BROAD_PROBES):
             raise Error(f"{CONFIG}: asset_paths entry {pat!r} is too broad; name the asset directory")
+    unknown = sorted(set(cfg.get("guard_rules", [])) - set(GUARD_RULES))
+    if unknown:
+        raise Error(f"{CONFIG}: unknown guard_rules {', '.join(unknown)} (known: {', '.join(GUARD_RULES)})")
     tracked = set(files)
     for p in cfg.get("allow", []):
         if p not in tracked:
@@ -204,6 +214,11 @@ def check(root, canonical, public):
                     len(p.parts) > 1 and p.parts[0].lower() in NARRATIVE_ROOT_DIRS):
                 v.append(("narrative-dir", f, "move it to the fixed doc set (docs/runbooks/, docs/decisions.md) "
                           f"or into the memory system, or add the path to \"allow\" in {CONFIG}"))
+            if ext in CAPTION_EXT or (ext in DOC_EXT and (PERSON_RECORD_STEM.search(p.stem) or PERSON_RECORD_DIRS & {
+                    s.lower() for s in p.parts[:-1]})):
+                v.append(("person-record-path", f, "meeting notes, minutes, transcripts and audit dumps are never tracked; copy "
+                          "it out of the repo (inside the boundary) and delete it, or rename it if it documents code, or add "
+                          f"the path to \"allow\" in {CONFIG}"))
         # docs/ is prose; an image or binary document there is a capture or an export, whatever directory it sits in.
         if ext in BINARY_EXT and (p.parts[0] == "docs" or not any(r.match(f) for r in asset_ok)):
             v.append(("binary-path", f, "images and binary documents only in code-referenced asset paths; delete it, "
