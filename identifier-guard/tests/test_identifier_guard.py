@@ -371,6 +371,219 @@ class FailureMessage(unittest.TestCase):
         for shape in ("ROE/DOE/POE", "555-01xx", "area code 555", "4711", "CCM-471NN", "999", "1900-01-01", "1970-01-01", "example.com"):
             self.assertIn(shape, r.stdout, "failure message should name the allowed shape %r" % shape)
 
+# --- person-data rules (v1.8). Flagged lines are assembled at run time so this file never holds one: the first name is
+# taken from the canonical script's own shape list, the surname is an invented string, amounts are round. ---
+CANONICAL = load_guard_from(os.path.join(HERE, "..", "identifier-guard.py"))
+FIRST = sorted(CANONICAL.GIVEN_NAMES)[0]                    # a list entry, never typed here
+SURNAME = "Zq" + "xwick"                                    # invented
+FULL = FIRST + " " + SURNAME
+AMT = "$" + "1,000.00"
+PAY = "p" + "ay"
+FOUR = d("2", 4)
+TEST = "tests/unit/widget.test.ts"                          # a fixture path
+DOC = "docs/runbooks/widget.md"                             # a doc file
+
+
+def opt_in_patterns(path, text, *rules):
+    """Pattern names reported with the named opt-in rules switched on (the default set always runs)."""
+    findings = []
+    guard.check_line(path, 1, text, findings, frozenset(rules))
+    return sorted(k for _, _, k in findings)
+
+
+class NameNearAmount(unittest.TestCase):
+    """A First Last name (first word from the given-name shape list) near money or pay words, in any path."""
+
+    def test_name_next_to_money_is_flagged(self):
+        for line in (FULL + " paid " + AMT, "invoice for " + FULL + " sent", FULL + " owes " + AMT,
+                     FULL + ": payroll run", FIRST + " Q. " + SURNAME + " " + AMT, FULL + " acct " + d("2", 6)):
+            self.assertEqual(patterns(SRC, line), ["name_amount"], line.replace(FIRST, "<first>"))
+
+    def test_given_name_alone_before_or_after_a_dollar_amount_is_flagged(self):
+        self.assertEqual(patterns(SRC, FIRST + ": " + AMT), ["name_amount"])
+        self.assertEqual(patterns(SRC, AMT + " to " + FIRST), ["name_amount"])
+
+    def test_fixture_paths_and_docs_are_checked_too(self):
+        self.assertEqual(patterns(TEST, "{ name: '" + FULL + "', amount: '" + AMT + "' }"), ["name_amount"])
+        self.assertEqual(patterns(DOC, "| " + FULL + " | " + AMT + " |"), ["name_amount"])
+
+    def test_persona_surname_is_exempt(self):
+        for persona in ("Roe", "Doe", "Poe", "Bloggs", "Mockley", "Stubbs", "Fakeman"):
+            self.assertEqual(patterns(SRC, FIRST + " " + persona + " paid " + AMT), [], persona)
+
+    def test_title_case_prose_code_names_and_dates_are_not_flagged(self):
+        for line in ("Monthly Close paid " + AMT, "Testosterone Total " + d("2", 5), "const " + FIRST + SURNAME + " = 1000",
+                     FULL + " seen %d-03-14" % ADULT, FULL + " on March 14, %d" % ADULT, FULL + " reviewed the plan",
+                     FIRST + " Payment " + AMT, "100 Main St, San " + FIRST + " Zqxton, CA " + d("2", 5)):
+            self.assertEqual(patterns(SRC, line), [], line.replace(FIRST, "<first>"))
+
+    def test_marker_word_still_exempts_the_line(self):
+        self.assertEqual(patterns(SRC, FULL + " paid " + AMT + "  # synthetic"), [])
+
+    def test_shape_list_is_ascii_sorted_and_names_only(self):
+        names = CANONICAL.GIVEN_NAMES_SOURCE.split()
+        self.assertEqual(names, sorted(names))
+        self.assertEqual(len(names), len(set(names)))
+        self.assertTrue(all(n.isascii() and n.isalpha() and n[0].isupper() for n in names))
+        self.assertGreater(len(names), 400)
+
+
+class PayNearPerson(unittest.TestCase):
+    """Pay tied to a person: his/her pay near an amount, she/he takes home an amount, Name's pay near an amount."""
+
+    def test_pronoun_pay_is_flagged(self):
+        for line in ("her gross " + PAY + " was " + AMT, AMT + " is his sal" + "ary", "she takes ho" + "me ~" + AMT,
+                     "her wa" + "ges came to " + AMT):
+            self.assertEqual(patterns(SRC, line), ["pay_near_person"], line)
+
+    def test_possessive_pay_is_flagged(self):
+        self.assertEqual(patterns(SRC, SURNAME + "'s net " + PAY + ": " + AMT), ["pay_near_person"])
+        self.assertEqual(patterns(DOC, SURNAME + "&apos;s gross " + PAY + " of " + AMT), ["pay_near_person"])
+        self.assertEqual(patterns(SRC, FIRST + "'s net " + PAY + ": " + AMT), ["name_amount", "pay_near_person"])
+
+    def test_pay_without_a_person_is_not_flagged(self):
+        for line in ("net " + PAY + ": " + AMT, "the employee's " + PAY + " is " + AMT, "Gusto's net " + PAY + " " + AMT,
+                     "her " + PAY + " stub is attached"):
+            self.assertEqual(patterns(SRC, line), [], line)
+
+
+class PartialId(unittest.TestCase):
+    """Last-4 fragments of real ids in docs and source; fixture paths only when opted in (fixture_partial_id)."""
+
+    def test_labelled_or_masked_last_four_is_flagged(self):
+        for line in ("card ending in " + FOUR, "last 4: " + FOUR, "last-four digits " + FOUR, "ends with " + FOUR,
+                     "****" + FOUR, "xxxx" + FOUR, "•••-" + FOUR):
+            self.assertEqual(patterns(SRC, line), ["partial_id"], line)
+            self.assertEqual(patterns(DOC, line), ["partial_id"], line)
+
+    def test_allowed_endings_dates_and_longer_numbers_are_not(self):
+        for line in ("ending in 4711", "last4: '0000'", "last 4: 4242", "ending 1111", "ending %d-03-14" % ADULT,
+                     "last 4 of " + d("2", 5), "/** " + FOUR + " note */", "**" + FOUR + "**"):
+            self.assertEqual(patterns(SRC, line), [], line)
+
+    def test_fixture_paths_only_when_opted_in(self):
+        line = "{ last4: '" + FOUR + "' }"
+        self.assertEqual(patterns(TEST, line), [])
+        self.assertEqual(opt_in_patterns(TEST, line, "fixture_partial_id"), ["fixture_partial_id"])
+        self.assertEqual(opt_in_patterns(TEST, "{ last4: '4711' }", "fixture_partial_id"), [])
+
+
+class OptInFixtureName(unittest.TestCase):
+    def test_off_by_default_and_flagged_when_opted_in(self):
+        line = "  lastName: '" + SURNAME + "',"
+        self.assertEqual(patterns(TEST, line), [])
+        self.assertEqual(opt_in_patterns(TEST, line, "fixture_name"), ["fixture_name"])
+        self.assertEqual(opt_in_patterns("docs/mockups/home.html", "patientName: '" + SURNAME + "'", "fixture_name"),
+                         ["fixture_name"])
+
+    def test_persona_values_empty_and_templates_pass(self):
+        for line in ("lastName: 'Roe'", "patient_name: 'Jane Doe'", "fullName: \"BLOGGS, J\"", "lastName: ''",
+                     "lastName: '${last}'", "surname: '{{ surname }}'"):
+            self.assertEqual(opt_in_patterns(TEST, line, "fixture_name"), [], line)
+
+    def test_source_paths_are_not_in_scope(self):
+        self.assertEqual(opt_in_patterns(SRC, "lastName: '" + SURNAME + "'", "fixture_name"), [])
+
+
+class OptInFixtureDob(unittest.TestCase):
+    def test_off_by_default_and_flagged_when_opted_in(self):
+        line = "dob: '%d-03-14'" % ADULT
+        self.assertEqual(patterns(TEST, line), [])
+        self.assertEqual(opt_in_patterns(TEST, line, "fixture_dob"), ["fixture_dob"])
+
+    def test_placeholders_pass(self):
+        for line in ("dob: '1970-01-01'", "dob: '1900-01-01'", "dob: '%d-03-14'" % (THIS_YEAR + 1)):
+            self.assertEqual(opt_in_patterns(TEST, line, "fixture_dob"), [], line)
+
+
+UUID = "-".join([d("2", 4) + d("a", 4), d("3", 4), d("4", 4), d("8", 4), d("b", 6) + d("c", 6)])
+
+
+class OptInDocUuid(unittest.TestCase):
+    def test_off_by_default_and_flagged_in_docs_when_opted_in(self):
+        line = "operation " + UUID + " finished"
+        self.assertEqual(patterns(DOC, line), [])
+        self.assertEqual(opt_in_patterns(DOC, line, "doc_uuid"), ["doc_uuid"])
+        self.assertEqual(opt_in_patterns("NOTES.md", line, "doc_uuid"), ["doc_uuid"])
+
+    def test_code_and_nil_uuids_pass(self):
+        self.assertEqual(opt_in_patterns(SRC, "const id = '" + UUID + "'", "doc_uuid"), [])
+        self.assertEqual(opt_in_patterns(DOC, "00000000-0000-0000-0000-000000000000", "doc_uuid"), [])
+
+
+class OptInFixtureAddress(unittest.TestCase):
+    def test_off_by_default_and_flagged_when_opted_in(self):
+        for line in ("Zqxton, CA " + d("6", 5), "Zqx Falls, CA " + d("6", 5) + "-" + d("7", 4), "zip: '" + d("6", 5) + "'",
+                     '"postalCode": "' + d("6", 5) + '"'):
+            self.assertEqual(patterns(TEST, line), [], line)
+            self.assertEqual(opt_in_patterns(TEST, line, "fixture_address"), ["fixture_address"], line)
+
+    def test_allowed_zips_and_non_address_words_pass(self):
+        for line in ("zip: '00012'", "Zqxton, CA 47110", "zip: '99999'", "Use " + d("6", 5), "port " + d("6", 5)):
+            self.assertEqual(opt_in_patterns(TEST, line, "fixture_address"), [], line)
+
+
+class OptInEmailDomain(unittest.TestCase):
+    ADDR = "ops" + "@" + "zqx-clinic.com"
+
+    def test_off_by_default_and_flagged_in_tests_and_docs_when_opted_in(self):
+        for path in (TEST, DOC):
+            self.assertEqual(patterns(path, "to: '" + self.ADDR + "'"), [])
+            self.assertEqual(opt_in_patterns(path, "to: '" + self.ADDR + "'", "email_domain"), ["email_domain"])
+
+    def test_reserved_domains_versions_and_source_pass(self):
+        for line in ("a@example.com", "b@example.org", "c@example.net", "d@host.test", "e@mail.example", "noreply@zqx.com",
+                     "git@github.com:org/repo", "pkg@1.2.3", "x@users.noreply.github.com"):
+            self.assertEqual(opt_in_patterns(TEST, line, "email_domain"), [], line)
+        self.assertEqual(opt_in_patterns(SRC, self.ADDR, "email_domain"), [])
+
+
+class OptInConfig(unittest.TestCase):
+    """The guard reads guard_rules from .repo-standard.json at the repo root, in every mode, so hook and CI agree."""
+
+    def make_repo(self, td, config):
+        subprocess.run(["git", "init", "-q", td], check=True)
+        if config is not None:
+            with open(os.path.join(td, ".repo-standard.json"), "w") as f:
+                f.write(config)
+        os.makedirs(os.path.join(td, "tests"))
+        p = os.path.join(td, "tests", "a.test.ts")
+        with open(p, "w") as f:
+            f.write("dob: '%d-03-14'\n" % ADULT)
+        return p
+
+    def run_in(self, td, *args):
+        return subprocess.run([sys.executable, GUARD, *args], capture_output=True, text=True, cwd=td)
+
+    def test_rule_runs_only_when_listed(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = self.make_repo(td, None)
+            self.assertEqual(self.run_in(td, "--files", p).returncode, 0)
+        with tempfile.TemporaryDirectory() as td:
+            p = self.make_repo(td, '{"version": 1, "guard_rules": ["fixture_dob"]}')
+            r = self.run_in(td, "--files", p)
+            self.assertEqual(r.returncode, 1, r.stdout)
+            self.assertIn("a.test.ts:1 fixture_dob", r.stdout)
+
+    def test_staged_mode_reads_the_same_key(self):
+        with tempfile.TemporaryDirectory() as td:
+            self.make_repo(td, '{"guard_rules": ["fixture_dob"]}')
+            subprocess.run(["git", "-C", td, "add", "-A"], check=True)
+            r = self.run_in(td, "--staged")
+            self.assertEqual(r.returncode, 1, r.stdout)
+            self.assertIn("fixture_dob", r.stdout)
+
+    def test_unknown_rule_bad_json_and_wrong_type_fail_closed(self):
+        for config in ('{"guard_rules": ["fixture_dobb"]}', "{not json", '{"guard_rules": "fixture_dob"}'):
+            with tempfile.TemporaryDirectory() as td:
+                p = self.make_repo(td, config)
+                r = self.run_in(td, "--files", p)
+                self.assertEqual(r.returncode, 2, config + r.stdout + r.stderr)
+
+    def test_opt_in_names_are_the_documented_set(self):
+        self.assertEqual(set(guard.OPT_IN_RULES), {"fixture_name", "fixture_dob", "fixture_partial_id", "doc_uuid",
+                                                   "fixture_address", "email_domain"})
+
 
 if __name__ == "__main__":
     unittest.main()

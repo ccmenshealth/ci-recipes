@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Identifier guard: fails when ADDED lines in a diff look like patient identifiers.
 
-Canonical copy: https://github.com/ccmenshealth/ci-recipes (identifier-guard/identifier-guard.py). Every repo carries a
+Canonical copy: identifier-guard/identifier-guard.py in ci-recipes (the same bytes in every copy of ci-recipes). Every repo carries a
 byte-identical copy at scripts/identifier-guard.py so the pre-commit hook works offline; the shared workflow fails a PR
 whose copy differs. Change it there and run sync.sh, never in a single repo.
 
@@ -9,7 +9,12 @@ Checked patterns (on added lines only): SSN (dashed anywhere; labelled with or w
 (numeric or month-name dates) with a possible birth year; labelled MRN/FIN digits; CCM-NNNNN record numbers; US phone
 numbers (dashed, dotted, spaced, parenthesised, +1, and ten contiguous digits after a phone-ish label); LAST, FIRST
 (caps) next to a 5+ digit number or a date (not when that number has a 5-digit CPT / test-code or LOINC shape and no
-7+ digit number or date follows); personal e-mail domains.
+7+ digit number or date follows); personal e-mail domains; person data: a First Last name (first word from the
+given-name shape list) or a lone given name near money or pay words (name_amount), his/her pay or Name's pay near a dollar
+amount (pay_near_person), a labelled or masked last-4 fragment outside fixture paths (partial_id).
+Opt-in rules, switched on per repo by "guard_rules" in .repo-standard.json at the repo root (read in every mode, so the
+hook and CI agree): fixture_name, fixture_dob, fixture_partial_id, fixture_address (fixture and mockup paths),
+doc_uuid (doc files), email_domain (fixture, mockup and doc paths). An unknown rule name or a bad file is exit 2.
 A line is allowed when it carries a synthetic marker (ROE/DOE/POE personas, 555-01xx or area-code-555 phones, any
 impossible NANP number (area code or exchange starting 0/1), the practice's own published phone and fax, the regulator's
 published toll-free number, the 4711/471
@@ -28,7 +33,7 @@ usage: identifier-guard.py --base <rev> --head <rev>      (scans `git diff base.
                                                             an unreadable path is an error, exit 2)
 exit 0 clean, 1 findings, 2 could not scan.
 """
-import re, subprocess, sys, argparse
+import re, subprocess, sys, argparse, json, os
 from datetime import date
 
 MONTH = r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?"
@@ -69,6 +74,204 @@ PRACTICE_NUMBERS = frozenset({"8053928700", "8554204671"})
 # The regulator's published toll-free complaint number, quoted in the surgery consent text: a business number, exempt the
 # same way (exact match only). A separate set so each exemption says what it is.
 REGULATOR_NUMBERS = frozenset({"8009853059"})
+
+
+# --- person-data rules ---
+# A SHAPE list, not a list of people: common US given names, used only to tell a person-name shape ("First Last") from
+# Title-Case prose and headings. Given names that are also ordinary English words (Will, May, Mark, Grant, Jack…) are left
+# out on purpose. ASCII-sorted, one space between names.
+GIVEN_NAMES_SOURCE = """
+Aaliyah Aaron Abigail Abraham Adam Adeline Adrian Adriana Adrienne Agnes Aileen Alan Alana Albert Alberto
+Alejandra Alejandro Alexander Alexandra Alexandria Alexis Alfonso Alfredo Alice Alicia Alison Allan Allen
+Allison Alvin Alyssa Amanda Amelia Amy Ana Andre Andrea Andres Andrew Angela Angelica Angelina Angelo Anita Anna
+Annette Anthony Antoinette Antonio Aria Ariana Arlene Armando Arnold Arthur Arturo Ashley Audra Audrey Barbara
+Beatrice Beatriz Belinda Benito Benjamin Bernadette Bernard Bernardo Bethany Betty Beverly Bianca Bonnie Bradley
+Brandon Brenda Brent Brian Briana Brianna Bridget Brittany Brittney Bryan Byron Caleb Calvin Cameron Camila
+Candace Carissa Carla Carlos Carmela Caroline Carolyn Cassandra Catherine Cecilia Celeste Cesar Charlene Charles
+Cheryl Cheyenne Chloe Christa Christina Christine Christopher Cindy Clara Clarence Claudia Clifford Cody Colette
+Colin Colleen Connie Connor Corinne Cornelius Curtis Cynthia Daniel Daniela Danielle Darius Darlene Darnell
+Darren Darryl David Deanna Deborah Debra Delia Delores Denise Dennis Derek Desiree Diana Diane Diego Dolores
+Dominic Dominique Donald Donna Donovan Doris Dorothy Douglas Dwight Edgar Edith Edna Eduardo Edward Edwin Eileen
+Elaine Eleanor Elena Elias Elijah Elisa Elise Elizabeth Ellen Elliott Eloise Emilia Emilio Emily Emma Emmanuel
+Enrique Eric Erica Erick Erik Estela Esther Ethan Eugene Eugenia Eunice Evan Evangeline Evelyn Everett Felicia
+Fernanda Fernando Fiona Floyd Francis Francisco Franklin Gabriel Gabriela Gabriella Gabrielle Garrett Genevieve
+George Gerald Geraldine Gerardo Gertrude Gilbert Gina Giselle Gregory Guadalupe Gustavo Gwendolyn Haley Hannah
+Harold Harvey Hector Helen Henry Herbert Herman Hilda Horace Howard Ian Ignacio Ingrid Irene Isaac Isabel
+Isabella Isabelle Isaiah Ivan Jacob Jacqueline Jacquelyn Jaime James Jane Janelle Janet Janice Janine Jared
+Jasmine Jason Jasper Javier Jeanette Jeanne Jeffery Jeffrey Jennifer Jeremiah Jeremy Jerome Jerry Jesse Jessica
+Jesus Jill Jillian Joanne Joaquin Jocelyn Joel Johanna John Jonah Jonathan Jorge Jose Josefina Joseph Josephine
+Joshua Joyce Juan Juanita Judith Julia Julian Julianne Julie Julio Justin Justine Karen Karina Katelyn Katherine
+Kathleen Kathryn Katrina Kayla Keith Kendra Kenneth Kevin Kimberly Kristen Kristin Kristina Kristy Kurt Kyle
+Kylie Larissa Larry Latoya Laura Laurie Lawrence Layla Leila Leo Leon Leona Leonard Leroy Leslie Leticia Liam
+Liliana Lillian Linda Lionel Lisa Lloyd Lois Lorena Lorenzo Lorraine Louis Louise Lowell Lucas Lucia Lucille
+Luis Luisa Luke Luther Lydia Mackenzie Malcolm Manuel Marcela Marcia Marco Marcus Margaret Margarita Maria
+Maribel Marilyn Mario Marisa Marissa Marjorie Marlene Marta Martha Martin Marvin Mary Mateo Matthew Maureen
+Maurice Maxine Maxwell Megan Meghan Melanie Melissa Melvin Meredith Micah Michael Michelle Miguel Mildred
+Miranda Miriam Mitchell Monica Monique Morris Nadia Nancy Naomi Natalia Natalie Natasha Nathan Nathaniel Neil
+Nicholas Nicole Nina Noah Noelle Nolan Norma Norman Oliver Olivia Omar Orlando Oscar Oswaldo Owen Pablo Pamela
+Patricia Patrick Paul Paula Paulina Pedro Peggy Peter Philip Phillip Phyllis Priscilla Quentin Rachel Rafael
+Ramon Randall Raquel Raul Raymond Rebecca Rebekah Reginald Renee Rhonda Ricardo Richard Ricky Rita Robert
+Roberta Roberto Rochelle Roger Roland Ronald Rosalind Rosemary Roxanne Ruben Russell Ryan Sabrina Salvador
+Samantha Samuel Sandra Santiago Sara Sarah Saul Scarlett Scott Sean Sebastian Selena Serena Sergio Seth Sharon
+Shawn Sheila Sheldon Sheryl Shirley Sidney Silvia Simone Sofia Sonia Sonya Sophia Stacey Stacy Stanley Stephanie
+Stephen Steve Steven Stuart Susan Susana Sylvia Tabitha Tamara Tammy Tanya Teresa Teri Terrence Thelma Theodore
+Theresa Thomas Tiffany Timothy Tobias Travis Trevor Tristan Ulysses Valeria Valerie Vanessa Vernon Veronica
+Vicki Victor Vincent Vivian Viviana Wallace Walter Wanda Wesley Whitney Wilbur Wilma Xavier Yesenia Yolanda
+Yvette Yvonne Zachariah Zachary Zelda
+"""
+GIVEN_NAMES = frozenset(GIVEN_NAMES_SOURCE.split())
+# Title-Case words that end a heading or a label, never a surname: a name shape whose last word is one of these is prose.
+NAME_STOPWORDS = frozenset("""
+A Account Accounts Actual Add Admin All Also Amount An And Angeles Annual Any Approved Apr April Are At Aug
+August Ave Avenue Balance Bank Basic Be Blvd Bonus Book Books Branch Build By California Camarillo Can Card Care
+Cash Center Charge Charges Check City Client Clients Clinic Close Closing Co Code Codes Column Columns Commit
+Company Contractor Contractors Corp Cost Costs County Create Credit Current Custom Customer Customers Daily Data
+Date Day Debit Dec December Default Delete Demo Deploy Deposit Deposits Desktop Detail Details Did Dispute
+Disputes Do Doctor Does Done Dr Draft Drive Due Each East Edit Else Employee Employees Entries Entry Error
+Errors Every Example Expected Expense Expenses Failed Fake Feb February Fee Fees Field Fields File Files Filter
+Final Find First For Free Friday From Get Gold Got Gross Group Gusto Had Has Have Health Hide Hormone Hour Hours
+How Id Ids If In Inc Income Input Insurance Invoice Invoices Is It Item Items Jan January Journal Jul July Jun
+June Just Key Keys LLC Lab Label Labels Labs Last Ledger Line Lines List Llc Los Loss Made Main Make Manager Map
+Mar March Master May Medicaid Medical Medicare Member Members Membership Men Men's Mens Merge Might Mock Monday
+Month Monthly Mr Mrs Ms Must Name Names Net New Next No None North Not Note Notes Nov November Number Numbers
+Oct October Of Old On Online Only Open Opening Or Order Orders Output Owner Oxnard Page Pages Paid Patient
+Patients Pay Payment Payments Payout Payouts Payroll Pending Peptide Peptides Plan Plans Plus Post Premium
+Previous Price Prices Pro Profit Provider Put QuickBooks Quickbooks Rate Rates Rd Real Record Records Refund
+Remove Renewal Report Reports Request Response Revenue Review Road Row Rows Rule Rules Run Salary Sample San
+Santa Saturday Save Search Section See Semaglutide Sep Sept September Service Services Set Shall Should Show
+Shows Silver Some Sort South Square St Staff Standard State Status Ste Step Steps Street Stripe Subscription
+Subscriptions Subtotal Success Suite Summary Sunday Table Take Takes Tax Taxes Test Testosterone Tests Text That
+The Then Therapy These This Those Thursday Tirzepatide To Total Transfer Trial Tuesday Type Types Update Use
+Used User Users Uses Value Values Vendor Vendors Ventura View Visit Visits Warning Was Wednesday Week Weekly
+Weight Were West What When Where Which Who Why Will With Without Women Year Yes
+""".split())
+PERSONA_WORD = re.compile(r"(?i)\b(?:roe|doe|poe|bloggs|mockley|stubbs|fakeman)\b")
+NAME_WORD = re.compile(r"\b[A-Z][a-z]+(?:[-'][A-Z]?[a-z]+)?\b")
+NAME_GAP = re.compile(r"\s+(?:[A-Z]\.?\s+)?")                       # one space run, or a middle initial
+CURRENCY = r"\$\s?\d[\d,]*(?:\.\d{2})?"
+MONEY = re.compile(CURRENCY + r"|\b\d{1,3}(?:,\d{3})+(?:\.\d{2})?\b|\b\d+\.\d{2}\b|(?<![\d/.:-])\d{4,}(?![\d/:-]|\.\d)"
+                   r"|(?i:\b(?:paid|invoice[ds]?|payroll|salary|salaries|wages?|pay|payout|owes?|owed|bonus|refund(?:ed)?|reimburse\w*)\b)")
+DATEISH = re.compile(r"\b\d{4}-\d{1,2}-\d{1,2}\b|\b\d{1,2}/\d{1,2}/\d{2,4}\b|(?i:\b" + MONTH + r"\s+\d{1,2},?\s+\d{4})|\b(?:19|20)\d\d\b")
+PLACE_PREFIX = re.compile(r"\b(?:San|Santa|Saint|St\.?|Los|Las|El|La|Del|Fort|Port|Mount|Mt\.?|Lake)\s+$")   # San Luis Obispo
+NAME_NEAR = 60                                # chars either side of a First Last name searched for money context
+LONE_NAME_MONEY = re.compile(r"\b([A-Z][a-z]+)\b(?!\s+[A-Z])[^\n$]{0,25}?" + CURRENCY + r"|" + CURRENCY + r"[^\n]{0,15}?\b(?:to|for|from)\s+([A-Z][a-z]+)\b")
+PAY_WORD = r"(?:(?:gross|net|take[- ]home|base)\s+)?(?:pay|paycheck|wages?|salary|bonus|hourly\s+rate|comp(?:ensation)?)"
+PRONOUN_PAY = re.compile(r"(?i:\b(?:his|her)\s+" + PAY_WORD + r"\b)[^\n]{0,50}?" + CURRENCY + r"|" + CURRENCY
+                         + r"[^\n]{0,50}?(?i:\b(?:his|her)\s+" + PAY_WORD + r"\b)"
+                         r"|(?i:\b(?:she|he)\s+(?:takes\s+home|earns|makes|is\s+paid|was\s+paid))[^\n]{0,30}?" + CURRENCY)
+POSSESSIVE_PAY = re.compile(r"\b([A-Z][a-z]+)(?:'s|\u2019s|&apos;s)\s+(?i:" + PAY_WORD + r")\b[^\n]{0,50}?" + CURRENCY)
+PARTIAL_ID = re.compile(r"(?i)(?:\blast[\s_-]*(?:4|four)(?:[\s_-]*digits?)?|\bending(?:[\s_-]+in)?|\bends[\s_-]+(?:in|with))"
+                        r"[\s:=\"'`#(-]{0,6}(\d{4})(?![\d/-])|(?<![\w*\u2022])(?:[*\u2022]{4,}|[xX]{4,}|\u2022{3}-)(\d{4})(?!\d)")
+ALLOWED_LAST4 = frozenset({"4711", "0000", "4242", "1111"})   # the 4711 block, all zeros, the standard test-card endings
+NAME_KEY = re.compile(r"""(?i)(?<![a-z])["']?(?:last_?name|lname|sur_?name|family_?name|patient_?name|full_?name|display_?name"""
+                      r"""|legal_?name|name_?last)["']?\s*[:=]\s*["']([^"'\n]{2,60})["']""")
+UUID = re.compile(r"(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b")
+CITY_ZIP = re.compile(r"\b[A-Z][a-z]+(?:\s[A-Z][a-z]+){0,2},\s*[A-Z]{2},?\s+(\d{5})(?:-\d{4})?(?!\d)")
+ZIP_KEY = re.compile(r"""(?i)(?<![a-z])["']?(?:zip|zip_?code|zip5|postal_?code|postcode)["']?\s*[:=]\s*["']?(\d{5})(?:-\d{4})?(?!\d)""")
+ANY_EMAIL = re.compile(r"(?i)(?<![a-z0-9._%+\-])([a-z0-9._%+\-]{1,64})@([a-z0-9-]+(?:\.[a-z0-9-]+)+)\b")
+RESERVED_DOMAIN = re.compile(r"(?i)(?:^|\.)(?:example\.(?:com|org|net)|example|test|invalid|localhost)$")
+NO_PERSON_LOCAL = re.compile(r"(?i)^(?:noreply|no-reply|donotreply|do-not-reply|git)$")
+MOCKUP_PATH = re.compile(r"(?i)(^|/)mockups?(/|$)")
+DOC_FILE = re.compile(r"(?i)(^docs/|\.(?:md|markdown|mdx|txt|rst|adoc|html?)$)")
+OPT_IN_RULES = ("fixture_name", "fixture_dob", "fixture_partial_id", "doc_uuid", "fixture_address", "email_domain")
+CONFIG = ".repo-standard.json"
+
+
+def name_amount(text):
+    """A First [M.] Last name near money or pay words, or a lone given name next to a dollar amount."""
+    words = list(NAME_WORD.finditer(text))
+    for i, w in enumerate(words):
+        if w.group(0) not in GIVEN_NAMES:
+            continue
+        run = [w]
+        for nxt in words[i + 1:i + 3]:                 # up to two more words, each separated by one gap
+            if NAME_GAP.fullmatch(text, run[-1].end(), nxt.start()):
+                run.append(nxt)
+            else:
+                break
+        while len(run) > 1 and run[-1].group(0) in NAME_STOPWORDS:
+            run.pop()
+        if len(run) < 2 or PERSONA_WORD.search(run[-1].group(0)) or PLACE_PREFIX.search(text, 0, run[0].start()):
+            continue
+        before = DATEISH.sub(" ", text[max(0, run[0].start() - NAME_NEAR):run[0].start()])
+        after = DATEISH.sub(" ", text[run[-1].end():run[-1].end() + NAME_NEAR])
+        if MONEY.search(before) or MONEY.search(after):
+            return True
+    return any((m.group(1) or m.group(2)) in GIVEN_NAMES for m in LONE_NAME_MONEY.finditer(text))
+
+
+def pay_near_person(text):
+    return bool(PRONOUN_PAY.search(text)) or any(m.group(1) not in NAME_STOPWORDS for m in POSSESSIVE_PAY.finditer(text))
+
+
+def partial_id(text):
+    return any((m.group(1) or m.group(2)) not in ALLOWED_LAST4 for m in PARTIAL_ID.finditer(text))
+
+
+def fixture_name(text):
+    return any(not ("${" in v or "{{" in v or PERSONA_WORD.search(v)) and re.search(r"[A-Za-z]{2}", v)
+               for v in (m.group(1) for m in NAME_KEY.finditer(text)))
+
+
+def fixture_dob(text):
+    return any(not synthetic("dob", m) for m in PATTERNS["dob"][0].finditer(text))
+
+
+def doc_uuid(text):
+    return any(len(set(m.group(0).replace("-", "").lower())) > 1 for m in UUID.finditer(text))
+
+
+def fixture_address(text):
+    zips = [m.group(1) for rx in (CITY_ZIP, ZIP_KEY) for m in rx.finditer(text)]
+    return any(not (z.startswith("000") or z.startswith("4711") or z == "99999") for z in zips)
+
+
+def email_domain(text):
+    for m in ANY_EMAIL.finditer(text):
+        local, domain = m.group(1), m.group(2).lower()
+        if not (RESERVED_DOMAIN.search(domain) or NO_PERSON_LOCAL.match(local) or domain.endswith("noreply.github.com")
+                or domain.rsplit(".", 1)[-1].isdigit()):
+            return True
+    return False
+
+
+# name -> (check, scope); scope is "all", "not_fixture", "fixture" (fixture and mockup paths), "doc", "fixture_or_doc".
+PERSON_RULES = {
+    "name_amount": (name_amount, "all"),
+    "pay_near_person": (pay_near_person, "all"),
+    "partial_id": (partial_id, "not_fixture"),
+    "fixture_name": (fixture_name, "fixture"),
+    "fixture_dob": (fixture_dob, "fixture"),
+    "fixture_partial_id": (partial_id, "fixture"),
+    "doc_uuid": (doc_uuid, "doc"),
+    "fixture_address": (fixture_address, "fixture"),
+    "email_domain": (email_domain, "fixture_or_doc"),
+}
+
+
+def load_opt_in():
+    """guard_rules from .repo-standard.json at the repo root (git toplevel of the current directory); none outside a repo."""
+    r = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+    if r.returncode != 0:
+        return frozenset()
+    path = os.path.join(r.stdout.strip(), CONFIG)
+    if not os.path.isfile(path):
+        return frozenset()
+    try:
+        with open(path, encoding="utf-8") as f:
+            cfg = json.load(f)
+    except (OSError, ValueError) as e:            # fail CLOSED: a broken config never switches rules off silently
+        print(f"identifier guard: {CONFIG} is not valid JSON ({e}); refusing to pass")
+        sys.exit(2)
+    rules = cfg.get("guard_rules", []) if isinstance(cfg, dict) else None
+    if not isinstance(rules, list) or not all(isinstance(x, str) for x in rules):
+        print(f"identifier guard: {CONFIG}: guard_rules must be a list of rule names; refusing to pass")
+        sys.exit(2)
+    unknown = sorted(set(rules) - set(OPT_IN_RULES))
+    if unknown:
+        print(f"identifier guard: {CONFIG}: unknown guard_rules {', '.join(unknown)} (known: {', '.join(OPT_IN_RULES)}); refusing to pass")
+        sys.exit(2)
+    return frozenset(rules)
 
 
 def impossible_nanp(digits):
@@ -115,7 +318,7 @@ def synthetic(name, m):
     return False
 
 
-def check_line(path, lineno, text, findings):
+def check_line(path, lineno, text, findings, opt_in=frozenset()):
     if LOCKFILE.search(path) or LINE_MARKER.search(text):
         return
     fixture = bool(FIXTURE_PATH.search(path))
@@ -124,12 +327,20 @@ def check_line(path, lineno, text, findings):
             continue   # test fixtures may carry record-number/DOB shapes; names, phones, e-mails and SSNs are still checked there
         if any(not synthetic(name, m) for rx in rxs for m in rx.finditer(text)):   # every match judged on its OWN text, not the line
             findings.append((path, lineno, name))
+    fixture_like = fixture or bool(MOCKUP_PATH.search(path))
+    doc = bool(DOC_FILE.search(path))
+    in_scope = {"all": True, "not_fixture": not fixture, "fixture": fixture_like, "doc": doc, "fixture_or_doc": fixture_like or doc}
+    for name, (rule, scope) in PERSON_RULES.items():
+        if (name in OPT_IN_RULES and name not in opt_in) or not in_scope[scope]:
+            continue
+        if rule(text):
+            findings.append((path, lineno, name))
 
 
 GIT_DIFF = ["git", "-c", "diff.noprefix=false", "-c", "diff.mnemonicPrefix=false", "diff", "--no-color", "--no-ext-diff", "--no-textconv", "--unified=0"]
 
 
-def scan_diff(args):
+def scan_diff(args, opt_in=frozenset()):
     r = subprocess.run(GIT_DIFF + args, capture_output=True, text=True, errors="replace")
     if r.returncode != 0:                      # fail CLOSED: an unreadable diff is never "clean"
         print(f"identifier guard: git diff failed (exit {r.returncode}); refusing to pass")
@@ -147,11 +358,11 @@ def scan_diff(args):
         elif in_hunk and line.startswith("+"):
             lineno += 1
             if path and path != "/dev/null":
-                check_line(path, lineno, line[1:], findings)
+                check_line(path, lineno, line[1:], findings, opt_in)
     return findings
 
 
-def scan_files(paths):
+def scan_files(paths, opt_in=frozenset()):
     findings = []
     for p in paths:
         try:
@@ -161,7 +372,7 @@ def scan_files(paths):
             with open(p, encoding="utf-8", errors="replace") as f:
                 for i, text in enumerate(f, 1):
                     if len(text) <= MAX_LINE:
-                        check_line(p, i, text, findings)
+                        check_line(p, i, text, findings, opt_in)
         except OSError as e:                   # fail CLOSED: an unreadable file is never "clean"
             print(f"identifier guard: cannot read {p}: {e.strerror}; refusing to pass")
             sys.exit(2)
@@ -173,14 +384,15 @@ def main():
     ap.add_argument("--base"); ap.add_argument("--head", default="HEAD"); ap.add_argument("--staged", action="store_true")
     ap.add_argument("--files", nargs="*"); ap.add_argument("--three-dot", action="store_true")
     a = ap.parse_args()
+    opt_in = load_opt_in()
     if a.files:
-        findings = scan_files(a.files)
+        findings = scan_files(a.files, opt_in)
     elif a.staged:
-        findings = scan_diff(["--cached"])
+        findings = scan_diff(["--cached"], opt_in)
     else:
         if not a.base:
             sys.exit("need --base <rev> (or --staged / --files)")
-        findings = scan_diff([f"{a.base}...{a.head}" if a.three_dot else f"{a.base}..{a.head}", "--"])
+        findings = scan_diff([f"{a.base}...{a.head}" if a.three_dot else f"{a.base}..{a.head}", "--"], opt_in)
     if findings:
         print("identifier guard: possible patient identifiers in added lines (file:line pattern). " + ALLOWED_SHAPES
               + " If this is a push to the default branch, the text is already in history: tell Steve before doing anything else.")
